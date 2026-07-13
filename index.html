@@ -92,6 +92,21 @@
        distToSegment を流用し、線幅＋指の当たり半径を加味。ペン以外のツールに移ると消去モードは自動解除。
        [fix] sizePannoCanvas を naturalWidth/Height が 0 の場合（SVG等）も 1000×750 に確実にフォールバック
        するよう堅牢化。
+  build v6.3 (役割ヒントチップを削除)  — 画面左上に出ていた役割説明のヒントチップ（現場/作図/管理の権限説明）を
+       ユーザー要望により完全撤去。HTML要素 #hintChip・renderHint()・renderAll からの呼び出し・HINTS 定数・
+       .hint-chip の CSS（PC/モバイル）をすべて削除。vp の pointerdown 除外リストの .hint-chip は要素消滅で
+       常に無効化されるため無害として据え置き。役割切替やツール操作でJSエラーが出ないことを確認。
+  build v6.4 (注釈を台帳サムネイルに反映)  — 写真に書き込んで完了すると、台帳のサムネイル（と拡大表示）を
+       「元写真＋注釈」の合成画像に差し替え。方式は「見た目だけ合成・データは別レイヤーのまま」で、注釈エディタを
+       開けば引き続き編集・消去できる（pins[].photos の元写真も photoInk も不変）。合成はオフスクリーンcanvasで
+       drawInkItem を流用して生成し compositeCache にキャッシュ、注釈内容のシグネチャ変化で再合成。注釈を全消し
+       すると元写真に自動復帰。拡大（ライトボックス）も合成画像を表示。
+  build v6.5 (Apple Pencil 書き味改善)  — 写真注釈と図面の朱書き両方のペン描画を改善。
+       (1) getCoalescedEvents() で pointermove に間引かれた中間点をまとめて拾い、速い線でも点の取りこぼしを防止
+       （非対応環境は現行1点にフォールバック）。(2) free 線の描画を直線結びから二次ベジェ曲線（中点法）に変更し、
+       少ない点でもカクつかず滑らかに（drawInkItem 共有なので図面・写真の両方に反映）。(3) 写真注釈の
+       pointermove ごとの即描画をやめ requestAnimationFrame で次フレームに1回だけまとめて描く schedulePannoRedraw
+       を導入し、高頻度入力での描画詰まり・遅延を軽減。筆圧は不採用（用途上、太さ一定のほうが朱書きに適するため）。
 -->
 <html lang="ja">
 <head>
@@ -186,18 +201,6 @@
   .watermark .row{white-space:nowrap;text-align:center;font-family:var(--mono);font-weight:700;
     font-size:46px;color:rgba(240,68,56,.30);letter-spacing:8px}
   .watermark .row small{font-size:.44em;letter-spacing:10px}
-
-  /* role hint chip */
-  .hint-chip{
-    position:absolute;top:12px;left:12px;z-index:12;max-width:min(70%,460px);
-    background:rgba(22,28,37,.92);backdrop-filter:blur(8px);border:1px solid var(--line);
-    border-left:3px solid var(--signal);border-radius:12px;padding:11px 14px;
-    display:flex;gap:10px;align-items:flex-start;box-shadow:0 8px 26px rgba(0,0,0,.4);
-    font-size:13px;line-height:1.5;color:var(--muted);
-  }
-  .hint-chip b{color:var(--signal)} .hint-chip.role-drafter{border-left-color:var(--warn)} .hint-chip.role-drafter b{color:var(--warn)}
-  .hint-chip.role-admin{border-left-color:#9DC2FF} .hint-chip.role-admin b{color:#9DC2FF}
-  .hint-chip svg{width:17px;height:17px;flex-shrink:0;margin-top:1px}
 
   /* offline blocker */
   .blocker{position:absolute;inset:0;background:rgba(11,14,19,.92);backdrop-filter:blur(4px);
@@ -557,7 +560,6 @@
     #openSheets .lbl{display:none}
     .subbar .meta-mini{display:none}
     .role-seg button{min-width:44px;padding:0 9px}
-    .hint-chip{max-width:calc(100% - 24px);font-size:12.5px}
   }
   @media(max-width:400px){
     .role-seg button .txt{display:none} .role-seg button{min-width:38px}
@@ -837,7 +839,7 @@
   <span id="statusPill"></span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v6.2 · ペン消しゴム</span>
+  <span class="build-tag" title="機能ビルド番号">build v6.5 · ペン書き味改善</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -851,7 +853,6 @@
   <!-- pins float in viewport space (constant screen size, anchored to drawing coords) -->
   <div class="pin-layer" id="pinLayer"></div>
 
-  <div class="hint-chip role-field" id="hintChip"></div>
   <div class="tool-panel" id="shapePanel" data-key="shape" data-pos="center">
     <div class="tp-row shape-row" id="shapeRow">
       <div class="tp-handle" data-handle="shape" title="ドラッグして左右に移動">
@@ -1381,12 +1382,6 @@ const publishedVer=d=>d.versions.find(v=>v.status==='published');
 const viewingVerObj=()=>{const d=dwg();return d.versions.find(v=>v.v===state.viewingVer)||publishedVer(d)||d.versions[d.versions.length-1];};
 const inkKey=()=>state.selectedId+'@'+viewingVerObj().v;
 
-const HINTS={
-  field:'あなたは<b>現場作業員</b>。最新図面の閲覧・朱書き・ピンでの写真記録ができます。旧版を開くと画面が遮断されます。',
-  drafter:'あなたは<b>作図担当</b>。図面を「仮登録（ドラフト）」まで行えます。現場への公開権限はありません。',
-  admin:'あなたは<b>管理者</b>。ドラフトを確認し「最新版として公開」で全現場へ一斉同期できます。',
-};
-
 /* ===== view transform (pan/zoom) ===== */
 const vp=$('#viewport'), frame=$('#paperFrame');
 const CW=880, CH=620;
@@ -1669,7 +1664,13 @@ vp.addEventListener('pointermove',e=>{
   if(curItem){
     const pt=toCanvas(e.clientX,e.clientY);
     if(curItem.type==='free'){
-      curItem.pts.push(pt);
+      // Apple Pencil の間引かれた中間点も拾う（図面の朱書きも滑らかに）
+      const evs = (typeof e.getCoalescedEvents==='function') ? e.getCoalescedEvents() : null;
+      if(evs && evs.length){
+        for(const ce of evs){ curItem.pts.push(toCanvas(ce.clientX,ce.clientY)); }
+      } else {
+        curItem.pts.push(pt);
+      }
     } else if(curItem.type==='rect'||curItem.type==='ellipse'){
       if(effectiveShift()){
         const dx=pt.x-curItem.x1, dy=pt.y-curItem.y1;
@@ -1789,8 +1790,22 @@ function drawInkItem(c, item, draftInfo){
   c.lineWidth=item.width||3.5;
   c.setLineDash(item.dash?[Math.max(8,c.lineWidth*2.5),Math.max(6,c.lineWidth*1.8)]:[]);
   if(item.type==='free'){
+    const p=item.pts;
     c.beginPath();
-    item.pts.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));
+    if(p.length<3){
+      // 点が少ないときは直線（または点）で
+      p.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));
+    } else {
+      // 中点法：各点を制御点にし、隣り合う点の中点を通る二次ベジェ曲線で結ぶ。
+      // 少ない点でもカクつかず滑らかな曲線になる（手描きアプリで定番）。
+      c.moveTo(p[0].x,p[0].y);
+      for(let i=1;i<p.length-1;i++){
+        const mx=(p[i].x+p[i+1].x)/2, my=(p[i].y+p[i+1].y)/2;
+        c.quadraticCurveTo(p[i].x,p[i].y,mx,my);
+      }
+      // 最後の点まで結ぶ
+      c.quadraticCurveTo(p[p.length-2].x,p[p.length-2].y,p[p.length-1].x,p[p.length-1].y);
+    }
     c.stroke();
   } else if(item.type==='rect'){
     const rx=Math.min(item.x1,item.x2), ry=Math.min(item.y1,item.y2), rw=Math.abs(item.x2-item.x1), rh=Math.abs(item.y2-item.y1);
@@ -2071,10 +2086,72 @@ function renderLedger(){
   body.innerHTML=html;
   bindLedger();
 }
+
+/* ===== 写真＋注釈の合成（サムネイル・拡大表示用）=====
+   元写真(src)と注釈(photoInk[src])を1枚に合成したdataURLを作りキャッシュ。
+   データは別レイヤーのままなので、注釈エディタでの編集は引き続き可能。 */
+let compositeCache={};   // src → 合成dataURL
+let compositeSig={};     // src → 注釈内容のシグネチャ（変化検知用）
+function annoSignature(src){
+  const arr=photoInk[src]||[];
+  return arr.length+':'+JSON.stringify(arr).length; // 件数＋データ量で簡易判定
+}
+// 注釈のある写真すべてについて合成画像を用意し、img/バッジに反映
+function applyComposited(scope){
+  const imgs=scope.querySelectorAll('.lphoto-img');
+  imgs.forEach(im=>{
+    const src=im.dataset.src;
+    if(!hasPhotoInk(src)){
+      // 注釈なし：元写真のまま（以前の合成が残っていれば戻す）
+      if(im.src!==src) im.src=src;
+      delete compositeCache[src]; delete compositeSig[src];
+      return;
+    }
+    const sig=annoSignature(src);
+    if(compositeCache[src] && compositeSig[src]===sig){
+      im.src=compositeCache[src]; // キャッシュ済み
+      return;
+    }
+    // 合成を生成（非同期）。まず元写真を表示しておき、できたら差し替え。
+    buildComposite(src).then(dataUrl=>{
+      compositeCache[src]=dataUrl; compositeSig[src]=sig;
+      // 再描画で img が入れ替わっている可能性があるので、data-src で引き直す
+      document.querySelectorAll(`.lphoto-img[data-src="${cssEsc(src)}"]`).forEach(x=>x.src=dataUrl);
+    }).catch(()=>{});
+  });
+}
+function cssEsc(s){ return (window.CSS&&CSS.escape)?CSS.escape(s):s.replace(/["\\]/g,'\\$&'); }
+// 1枚の写真＋注釈をオフスクリーンcanvasで合成→dataURL
+function buildComposite(src){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      let nw=img.naturalWidth, nh=img.naturalHeight;
+      if(!nw||!nh){ nw=1000; nh=750; }
+      // 注釈論理サイズ（sizePannoCanvasと同じ長辺1000正規化）
+      const ar=nw/nh; let lw,lh;
+      if(nw>=nh){ lw=1000; lh=Math.round(1000/ar); } else { lh=1000; lw=Math.round(1000*ar); }
+      const cv=document.createElement('canvas'); cv.width=lw; cv.height=lh;
+      const c=cv.getContext('2d');
+      c.drawImage(img,0,0,lw,lh);
+      c.lineCap='round'; c.lineJoin='round';
+      (photoInk[src]||[]).forEach(item=>drawInkItem(c,item));
+      resolve(cv.toDataURL('image/jpeg',0.88));
+    };
+    img.onerror=()=>reject(new Error('img load failed'));
+    img.src=src;
+  });
+}
+
 function bindLedger(){
   const body=$('#ledgerBody');
-  // 写真タップで拡大（既存ライトボックス流用）
-  body.querySelectorAll('.lphoto-img').forEach(im=>im.addEventListener('click',()=>openLightbox(im.src)));
+  // 注釈のある写真は、合成画像（元写真＋注釈）をサムネイル／拡大に反映（データは別レイヤーのまま）
+  applyComposited(body);
+  // 写真タップで拡大（注釈があれば合成画像を、なければ元写真を表示）
+  body.querySelectorAll('.lphoto-img').forEach(im=>im.addEventListener('click',()=>{
+    const src=im.dataset.src;
+    openLightbox(compositeCache[src]||src);
+  }));
   // 書き込みボタンで注釈エディタを開く
   body.querySelectorAll('.lphoto-anno').forEach(btn=>btn.addEventListener('click',e=>{
     e.stopPropagation();
@@ -2371,6 +2448,14 @@ function redrawPanno(){
   }
   refreshPannoBtns();
 }
+// 描画軽量化：pointermove ごとに即描画せず、次の描画フレームで1回だけ redraw する。
+// 高頻度な Apple Pencil の入力でも描画が詰まらず、遅延（線が指に遅れて付いてくる感じ）を抑える。
+let pannoRedrawQueued=false;
+function schedulePannoRedraw(){
+  if(pannoRedrawQueued) return;
+  pannoRedrawQueued=true;
+  requestAnimationFrame(()=>{ pannoRedrawQueued=false; redrawPanno(); });
+}
 function pannoDeselect(){ pannoSelected=null; pannoDrag=null; }
 function refreshPannoBtns(){
   const has=hasPhotoInk(pannoSrc);
@@ -2515,7 +2600,18 @@ pannoCanvas.addEventListener('pointermove',e=>{
     return;
   }
   if(pannoDrawing){
-    if(pannoDrawing.type==='free'){ pannoDrawing.pts.push(pt); }
+    if(pannoDrawing.type==='free'){
+      // Apple Pencil の間引かれた中間点も拾って滑らかに（getCoalescedEvents）。
+      // 非対応環境では現在の1点にフォールバック。
+      const evs = (typeof e.getCoalescedEvents==='function') ? e.getCoalescedEvents() : null;
+      if(evs && evs.length){
+        for(const ce of evs){ pannoDrawing.pts.push(pannoToCanvas(ce.clientX,ce.clientY)); }
+      } else {
+        pannoDrawing.pts.push(pt);
+      }
+      schedulePannoRedraw(); // 即描画せず次フレームでまとめて描く
+      return;
+    }
     else {
       let ex=pt.x,ey=pt.y;
       if(pannoShiftHeld){
@@ -2529,12 +2625,12 @@ pannoCanvas.addEventListener('pointermove',e=>{
       }
       pannoDrawing.x2=ex; pannoDrawing.y2=ey;
     }
-    redrawPanno();
+    schedulePannoRedraw();
   } else if(pannoPolyDraft){
     // 連続線のラバーバンド
     const last=pannoPolyDraft.pts[pannoPolyDraft.pts.length-1];
     pannoHoverPt=pannoShiftHeld?pannoSnap(last.x,last.y,pt.x,pt.y):pt;
-    redrawPanno();
+    schedulePannoRedraw();
   }
 });
 function pannoEndDraw(e){
@@ -3019,10 +3115,6 @@ $('#lightbox').addEventListener('click',e=>{if(e.target.id==='lightbox')$('#ligh
 $('#sheetScrim').addEventListener('click',closePin);
 
 /* ===== render ===== */
-function renderHint(){
-  const c=$('#hintChip'); c.className='hint-chip role-'+state.role;
-  c.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg><span>${HINTS[state.role]}</span>`;
-}
 function renderList(){
   const groups={};drawings.forEach(d=>{(groups[d.group]=groups[d.group]||[]).push(d);});
   let html='';
@@ -3225,7 +3317,7 @@ function toast(msg,kind){
 }
 
 /* ===== boot ===== */
-function renderAll(){renderHint();renderList();renderViewer();renderContext();updateTabs();}
+function renderAll(){renderList();renderViewer();renderContext();updateTabs();}
 window.addEventListener('resize',fitView);
 renderAll();fitView();layoutPanels();updateCollapsedGlyphs();
 </script>

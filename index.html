@@ -70,6 +70,28 @@
        復活。自由記述の複数行は維持し、写真セル内は 登録日→施工状況ボタン→自由記述→行追加 の順で併存。
        写真メタに status を追加（旧データ互換で undefined を '' 補完）。排他選択・再タップ解除。
        PDF出力にも反映：写真の左上に施工状況バッジ（施工前/中/後）を緑地で描画。
+  build v6 (写真への書き込み：ペン＋図形フルセット)  — 写真台帳の各写真に「書き込み」ボタンを追加。押すと
+       全画面の注釈エディタが開き、図面の朱書きと同じ道具（移動・ペン・図形＝四角/円/直線/矢印/連続線・
+       色11種・太さ4段・Shift固定・アンドゥ/リドゥ/全消去）で写真に書き込める。注釈は「別レイヤー」方式で
+       photoInk[src] に保持（元写真は不変・後から編集/消去可）。座標は写真の自然サイズを長辺1000に正規化した
+       論理系で持ち、表示サイズが変わってもズレない。描画は図面と共通の drawInkItem() を流用。注釈がある写真は
+       サムネイルの書き込みボタンが点灯。PDF出力時は写真の上に注釈を重ねて合成（cover表示に合わせた座標変換＋
+       写真枠でクリップ）。注釈エディタは既存フェーズ1（ペンのみ）を図形フルセットに拡張したもの。
+       [fix] 注釈エディタの置き換え時に隣接の mmPerUnit() 定義を巻き込み削除してしまい計測ツールが
+       ReferenceError になっていたのを復元（テストで検出）。
+  build v6.1 (写真注釈：選択・移動・リサイズ・削除)  — 図面と同じ操作感で、書き込んだ図形を編集可能に。
+       「移動」ツールで図形をタップ→選択（青点線枠＋ハンドル）、本体ドラッグで移動、ハンドルドラッグで
+       リサイズ／連続線は頂点ごとに変形。座標系純粋関数（shapeHandles/hitHandle/pointInShapeBody/shapeBounds）は
+       図面と共通のものを流用し、対象配列だけ photoInk[pannoSrc] に差し替え。ドックに「選択中の図形を削除」
+       ボタンを追加（図面の消しゴム相当・選択時のみ有効）。
+       [fix] pointerup 時に pannoDrag をクリアしておらず、移動・リサイズ後もドラッグ状態が残って図形が
+       ポインタに追従し続ける不具合を修正（テストで検出・検証）。
+  build v6.2 (ペン消しゴム：なぞってペン線を消す)  — ペンモード時のみドックに「ペン消しゴム」ボタンを表示。
+       押すとなぞり消去モードになり、なぞった軌跡に触れたペン線（type:'free'）を線全体単位で消す。
+       図形（rect/ellipse/line/arrow/poly）は対象外（図形の削除は移動ツールで選択→削除）。判定は既存の
+       distToSegment を流用し、線幅＋指の当たり半径を加味。ペン以外のツールに移ると消去モードは自動解除。
+       [fix] sizePannoCanvas を naturalWidth/Height が 0 の場合（SVG等）も 1000×750 に確実にフォールバック
+       するよう堅牢化。
 -->
 <html lang="ja">
 <head>
@@ -664,7 +686,14 @@
   /* 写真グリッド */
   .lphotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;padding:15px}
   .lphoto{background:var(--panel2);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+  .lphoto-imgwrap{position:relative}
   .lphoto-img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:var(--panel3);cursor:pointer}
+  .lphoto-anno{position:absolute;right:8px;bottom:8px;width:38px;height:38px;border-radius:10px;
+    background:rgba(11,14,19,.78);border:1px solid rgba(255,255,255,.22);color:#fff;
+    display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);transition:.1s}
+  .lphoto-anno:active{transform:scale(.9);background:var(--signal);color:var(--signal-ink)}
+  .lphoto-anno svg{width:19px;height:19px}
+  .lphoto-anno.has{background:var(--signal);color:var(--signal-ink);border-color:var(--signal)}
   .lphoto-body{padding:11px 12px;display:flex;flex-direction:column;gap:9px}
   .lphoto-date{font-family:var(--mono);font-size:11px;color:var(--muted2)}
   /* 施工状況（前/中/後） */
@@ -692,6 +721,86 @@
     .ledger-out-btn{padding:0 12px}
     .lphotos{grid-template-columns:1fr}
   }
+
+  /* 写真に「書き込む」ボタンは既存の .lphoto-anno を使用（重複定義を排除） */
+
+  /* ===== 写真注釈エディタ（全画面）===== */
+  .panno{position:fixed;inset:0;background:#0B0E13;z-index:150;display:none;flex-direction:column}
+  .panno.show{display:flex}
+  .panno-top{display:flex;align-items:center;gap:10px;padding:10px 14px;flex-shrink:0;
+    padding-top:calc(10px + var(--safe-t));background:linear-gradient(180deg,#1A222D,#12181F);border-bottom:1px solid var(--line)}
+  .panno-top h3{font-size:15px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .panno-done{height:42px;padding:0 18px;border-radius:11px;font-size:14px;font-weight:700;
+    background:linear-gradient(180deg,var(--signal),var(--signal-dim));color:var(--signal-ink)}
+  .panno-done:active{transform:scale(.96)}
+  /* 写真＋キャンバスのステージ */
+  .panno-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(circle at 50% 40%,#12171F,#0B0E13);touch-action:none;padding:12px}
+  .panno-holder{position:relative;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .panno-holder img{display:block;max-width:100%;max-height:100%;user-select:none;-webkit-user-drag:none}
+  .panno-canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair}
+  /* ツールドック（下部） */
+  .panno-dock{display:flex;align-items:center;gap:6px;padding:10px 12px;flex-shrink:0;flex-wrap:wrap;
+    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(0deg,#12181F,#161C25);border-top:1px solid var(--line);justify-content:center}
+  .pd-btn{width:46px;height:46px;border-radius:11px;background:var(--panel2);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;color:var(--text);transition:.1s}
+  .pd-btn svg{width:21px;height:21px}
+  .pd-btn.on{background:var(--panel3);border-color:var(--signal);color:var(--signal)}
+  .pd-btn:active{transform:scale(.92)}
+  .pd-btn:disabled{opacity:.35}
+  .pd-sep{width:1px;height:30px;background:var(--line2);margin:0 3px}
+  /* 図形サブ選択・スタイル行 */
+  .panno-shapes,.panno-style{display:flex;align-items:center;gap:6px;padding:8px 12px;flex-shrink:0;
+    justify-content:center;flex-wrap:wrap;background:#12181F;border-top:1px solid var(--line)}
+  .panno-shapes{display:none}.panno-shapes.show{display:flex}
+  .panno-style{display:none}.panno-style.show{display:flex}
+  .ps-shape{width:42px;height:42px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;color:var(--text)}
+  .ps-shape svg{width:20px;height:20px}
+  .ps-shape.on{border-color:var(--signal);color:var(--signal);background:var(--panel3)}
+  .ps-color{width:30px;height:30px;border-radius:50%;border:2px solid transparent}
+  .ps-color.on{border-color:#fff;box-shadow:0 0 0 2px var(--signal)}
+  .ps-width{display:flex;align-items:center;gap:5px}
+  .ps-width button{width:38px;height:38px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;color:var(--text)}
+  .ps-width button.on{border-color:var(--signal);background:var(--panel3)}
+  .ps-width .dotw{background:currentColor;border-radius:50%}
+
+  /* ===== photo annotation editor (写真注釈) ===== */
+  .panno{position:fixed;inset:0;background:#0B0E13;z-index:145;display:none;flex-direction:column}
+  .panno.show{display:flex}
+  .panno-top{display:flex;align-items:center;gap:10px;padding:10px 14px;flex-shrink:0;
+    padding-top:calc(10px + var(--safe-t));
+    background:linear-gradient(180deg,#1A222D,#12181F);border-bottom:1px solid var(--line)}
+  .panno-top h3{font-size:15px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .panno-x{width:44px;height:44px;border-radius:11px;background:var(--panel2);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .panno-x svg{width:20px;height:20px}
+  .panno-done{height:44px;padding:0 18px;border-radius:11px;font-size:14px;font-weight:700;
+    background:linear-gradient(180deg,var(--signal),var(--signal-dim));color:var(--signal-ink)}
+  /* 写真＋注釈の表示エリア */
+  .panno-stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;
+    overflow:hidden;background:radial-gradient(circle at 50% 40%,#12171F 0%,#0B0E13 100%);padding:12px}
+  .panno-wrap{position:relative;max-width:100%;max-height:100%;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  .panno-photo{display:block;max-width:100%;max-height:100%;user-select:none;-webkit-user-select:none;pointer-events:none}
+  .panno-canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair}
+  /* ツールバー（図面ドックの簡易版） */
+  .panno-dock{display:flex;align-items:center;gap:8px;padding:10px 14px;flex-shrink:0;flex-wrap:wrap;
+    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(180deg,#12181F,#0B0E13);border-top:1px solid var(--line);justify-content:center}
+  .panno-tool{height:48px;min-width:48px;padding:0 12px;border-radius:12px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--text);font-size:13px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;gap:6px;transition:.1s}
+  .panno-tool svg{width:20px;height:20px}
+  .panno-tool.on{background:var(--panel3);border-color:var(--signal);color:var(--signal)}
+  .panno-tool:active{transform:scale(.94)}
+  .panno-tool:disabled{opacity:.4}
+  .panno-sep{width:1px;height:32px;background:var(--line2);margin:0 2px}
+  /* 色選択 */
+  .panno-colors{display:flex;gap:6px}
+  .panno-color{width:30px;height:30px;border-radius:50%;border:2px solid transparent;transition:.1s}
+  .panno-color.on{border-color:#fff;transform:scale(1.12)}
 
   /* ===== build tag ===== */
   .build-tag{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink2);
@@ -728,7 +837,7 @@
   <span id="statusPill"></span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v5.2 · 写真台帳(施工状況)</span>
+  <span class="build-tag" title="機能ビルド番号">build v6.2 · ペン消しゴム</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -1037,6 +1146,47 @@
     <button class="ledger-close" id="ledgerClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
   </div>
   <div class="ledger-body" id="ledgerBody"></div>
+</div>
+
+<!-- photo annotation editor (写真注釈) -->
+<div class="panno" id="panno">
+  <div class="panno-top">
+    <button class="panno-done" id="pannoDone" style="background:var(--panel2);border:1px solid var(--line);color:var(--text)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <h3 id="pannoTitle">写真に書き込み</h3>
+    <button class="panno-done" id="pannoSave">完了</button>
+  </div>
+  <div class="panno-stage" id="pannoStage">
+    <div class="panno-holder" id="pannoHolder">
+      <img id="pannoPhoto" alt="注釈対象の写真">
+      <canvas class="panno-canvas" id="pannoCanvas"></canvas>
+    </div>
+  </div>
+  <!-- 図形サブ選択（図形ツール時のみ） -->
+  <div class="panno-shapes" id="pannoShapes">
+    <button class="ps-shape" data-shape="rect" title="四角"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1"/></svg></button>
+    <button class="ps-shape" data-shape="ellipse" title="円"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg></button>
+    <button class="ps-shape" data-shape="line" title="直線"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20L20 4"/></svg></button>
+    <button class="ps-shape" data-shape="arrow" title="矢印"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 19L19 5M12 5h7v7"/></svg></button>
+    <button class="ps-shape" data-shape="poly" title="連続線"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l5-8 4 5 3-4 6 7"/></svg></button>
+  </div>
+  <!-- スタイル行（色・太さ） -->
+  <div class="panno-style" id="pannoStyle">
+    <div class="panno-colors" id="pannoColors"></div>
+    <div class="pd-sep"></div>
+    <div class="ps-width" id="pannoWidths"></div>
+  </div>
+  <!-- ツールドック -->
+  <div class="panno-dock">
+    <button class="pd-btn" id="pannoNav" title="移動"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg></button>
+    <button class="pd-btn on" id="pannoPen" title="ペン"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
+    <button class="pd-btn" id="pannoPenErase" title="ペン消しゴム（なぞってペン線を消す）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16a2 2 0 0 1 0-3l9-9a2 2 0 0 1 3 0l5 5a2 2 0 0 1 0 3l-8 8M9 10l6 6"/></svg></button>
+    <button class="pd-btn" id="pannoShapeBtn" title="図形"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1"/><circle cx="17" cy="7" r="4"/><path d="M3 15l4 6 4-6"/></svg></button>
+    <div class="pd-sep"></div>
+    <button class="pd-btn" id="pannoUndo" title="元に戻す" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8"/></svg></button>
+    <button class="pd-btn" id="pannoRedo" title="やり直し" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6M21 13a9 9 0 1 1-3-7.7L21 8"/></svg></button>
+    <button class="pd-btn" id="pannoErase" title="選択中の図形を削除" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16a2 2 0 0 1 0-3l9-9a2 2 0 0 1 3 0l5 5a2 2 0 0 1 0 3l-8 8M9 10l6 6"/></svg></button>
+    <button class="pd-btn" id="pannoClear" title="全消去" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
+  </div>
 </div>
 
 
@@ -1632,54 +1782,59 @@ function refreshInkBtns(){
   $('#btnUndo').disabled=!has; $('#btnClear').disabled=!has; $('#btnRedo').disabled=!hasRedo;
   $('#btnErase').disabled=!selectedItem;
 }
+// 1つの注釈アイテムを任意のcanvas contextに描く（図面・写真注釈で共用）。
+// polyのラバーバンド（描画中プレビュー）は draftInfo で受け取る。
+function drawInkItem(c, item, draftInfo){
+  c.strokeStyle=item.color||'#E5372A';
+  c.lineWidth=item.width||3.5;
+  c.setLineDash(item.dash?[Math.max(8,c.lineWidth*2.5),Math.max(6,c.lineWidth*1.8)]:[]);
+  if(item.type==='free'){
+    c.beginPath();
+    item.pts.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));
+    c.stroke();
+  } else if(item.type==='rect'){
+    const rx=Math.min(item.x1,item.x2), ry=Math.min(item.y1,item.y2), rw=Math.abs(item.x2-item.x1), rh=Math.abs(item.y2-item.y1);
+    if(item.fill){ c.fillStyle=hexToRgba(item.color||'#E5372A',0.28); c.fillRect(rx,ry,rw,rh); }
+    c.strokeRect(rx,ry,rw,rh);
+  } else if(item.type==='ellipse'){
+    const cx=(item.x1+item.x2)/2, cy=(item.y1+item.y2)/2;
+    c.beginPath();
+    c.ellipse(cx,cy,Math.abs(item.x2-item.x1)/2,Math.abs(item.y2-item.y1)/2,0,0,Math.PI*2);
+    if(item.fill){ c.fillStyle=hexToRgba(item.color||'#E5372A',0.28); c.fill(); }
+    c.stroke();
+  } else if(item.type==='line'){
+    c.beginPath(); c.moveTo(item.x1,item.y1); c.lineTo(item.x2,item.y2); c.stroke();
+  } else if(item.type==='arrow'){
+    c.beginPath(); c.moveTo(item.x1,item.y1); c.lineTo(item.x2,item.y2); c.stroke();
+    const ang=Math.atan2(item.y2-item.y1,item.x2-item.x1), ah=14;
+    c.beginPath();
+    c.moveTo(item.x2-ah*Math.cos(ang-Math.PI/6),item.y2-ah*Math.sin(ang-Math.PI/6));
+    c.lineTo(item.x2,item.y2);
+    c.lineTo(item.x2-ah*Math.cos(ang+Math.PI/6),item.y2-ah*Math.sin(ang+Math.PI/6));
+    c.stroke();
+  } else if(item.type==='poly'){
+    c.beginPath();
+    item.pts.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));
+    c.stroke();
+    if(draftInfo && draftInfo.item===item && draftInfo.hoverPt && item.pts.length>=1){
+      const last=item.pts[item.pts.length-1];
+      c.save(); c.setLineDash([7,5]);
+      c.beginPath(); c.moveTo(last.x,last.y); c.lineTo(draftInfo.hoverPt.x,draftInfo.hoverPt.y); c.stroke();
+      c.restore();
+    }
+  } else if(item.type==='measure'){
+    drawMeasure(item);
+  }
+}
+
 function redrawInk(){
   canvas.width=CW;canvas.height=CH;canvas.style.width='100%';canvas.style.height='100%';
   ctx.clearRect(0,0,CW,CH);
   ctx.lineCap='round';ctx.lineJoin='round';
   const list=strokes[inkKey()]||[];
   if(selectedItem && !list.includes(selectedItem)) deselectShape(); // e.g. removed by undo/clear
-  list.forEach(item=>{
-    ctx.strokeStyle=item.color||'#E5372A';
-    ctx.lineWidth=item.width||3.5;
-    ctx.setLineDash(item.dash?[Math.max(8,ctx.lineWidth*2.5),Math.max(6,ctx.lineWidth*1.8)]:[]);
-    if(item.type==='free'){
-      ctx.beginPath();
-      item.pts.forEach((q,i)=>i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y));
-      ctx.stroke();
-    } else if(item.type==='rect'){
-      const rx=Math.min(item.x1,item.x2), ry=Math.min(item.y1,item.y2), rw=Math.abs(item.x2-item.x1), rh=Math.abs(item.y2-item.y1);
-      if(item.fill){ ctx.fillStyle=hexToRgba(item.color||'#E5372A',0.28); ctx.fillRect(rx,ry,rw,rh); }
-      ctx.strokeRect(rx,ry,rw,rh);
-    } else if(item.type==='ellipse'){
-      const cx=(item.x1+item.x2)/2, cy=(item.y1+item.y2)/2;
-      ctx.beginPath();
-      ctx.ellipse(cx,cy,Math.abs(item.x2-item.x1)/2,Math.abs(item.y2-item.y1)/2,0,0,Math.PI*2);
-      if(item.fill){ ctx.fillStyle=hexToRgba(item.color||'#E5372A',0.28); ctx.fill(); }
-      ctx.stroke();
-    } else if(item.type==='line'){
-      ctx.beginPath(); ctx.moveTo(item.x1,item.y1); ctx.lineTo(item.x2,item.y2); ctx.stroke();
-    } else if(item.type==='arrow'){
-      ctx.beginPath(); ctx.moveTo(item.x1,item.y1); ctx.lineTo(item.x2,item.y2); ctx.stroke();
-      const ang=Math.atan2(item.y2-item.y1,item.x2-item.x1), ah=14;
-      ctx.beginPath();
-      ctx.moveTo(item.x2-ah*Math.cos(ang-Math.PI/6),item.y2-ah*Math.sin(ang-Math.PI/6));
-      ctx.lineTo(item.x2,item.y2);
-      ctx.lineTo(item.x2-ah*Math.cos(ang+Math.PI/6),item.y2-ah*Math.sin(ang+Math.PI/6));
-      ctx.stroke();
-    } else if(item.type==='poly'){
-      ctx.beginPath();
-      item.pts.forEach((q,i)=>i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y));
-      ctx.stroke();
-      if(item===polyDraft && hoverPt && item.pts.length>=1){
-        const last=item.pts[item.pts.length-1];
-        ctx.save(); ctx.setLineDash([7,5]);
-        ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(hoverPt.x,hoverPt.y); ctx.stroke();
-        ctx.restore();
-      }
-    } else if(item.type==='measure'){
-      drawMeasure(item);
-    }
-  });
+  const draftInfo={item:polyDraft, hoverPt:hoverPt};
+  list.forEach(item=>drawInkItem(ctx,item,draftInfo));
   if(selectedItem){
     ctx.save();
     ctx.strokeStyle='#3B82F6'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
@@ -1895,7 +2050,10 @@ function renderLedger(){
           <button class="lphoto-line-rm" data-src="${escAttr(src)}" data-li="${li}" title="この行を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
         </div>`).join('');
       html+=`<div class="lphoto">
-        <img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" alt="現場写真">
+        <div class="lphoto-imgwrap">
+          <img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" alt="現場写真">
+          <button class="lphoto-anno ${hasPhotoInk(src)?'has':''}" data-src="${escAttr(src)}" title="写真に書き込み"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
+        </div>
         <div class="lphoto-body">
           <div class="lphoto-date">登録日：${meta.regDate}</div>
           <div class="lphoto-status" data-src="${escAttr(src)}">
@@ -1917,6 +2075,11 @@ function bindLedger(){
   const body=$('#ledgerBody');
   // 写真タップで拡大（既存ライトボックス流用）
   body.querySelectorAll('.lphoto-img').forEach(im=>im.addEventListener('click',()=>openLightbox(im.src)));
+  // 書き込みボタンで注釈エディタを開く
+  body.querySelectorAll('.lphoto-anno').forEach(btn=>btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    openPanno(btn.dataset.src);
+  }));
   // ピン共通メタ入力
   body.querySelectorAll('input[data-pmeta]').forEach(inp=>inp.addEventListener('input',()=>{
     const pm=pinLedgerMeta(ledgerDwgId,inp.dataset.pin);
@@ -2006,6 +2169,27 @@ function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
       let sx=0,sy=0,sw=iw,sh=ih;
       if(ar>boxAr){ sw=ih*boxAr; sx=(iw-sw)/2; } else { sh=iw/boxAr; sy=(ih-sh)/2; }
       ctx.drawImage(img,sx,sy,sw,sh,x,y,w,photoH);
+      // 写真への書き込み（注釈）を重ねる。注釈は写真の自然サイズ基準（長辺1000正規化）。
+      const anno=photoInk[cell.src];
+      if(anno && anno.length){
+        const nw=img.naturalWidth||img.width, nh=img.naturalHeight||img.height;
+        const annoAr=nw/nh;
+        let alw,alh; // 注釈論理キャンバスのサイズ（sizePannoCanvasと同じ規則）
+        if(nw>=nh){ alw=1000; alh=Math.round(1000/annoAr); } else { alh=1000; alw=Math.round(1000*annoAr); }
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x,y,w,photoH); ctx.clip(); // 写真枠でクリップ
+        // 注釈論理座標(alw×alh) は写真全体(nw×nh)に対応。
+        // 写真の可視域は元画像の (sx,sy,sw,sh) → セル (x,y,w,photoH)。
+        // 注釈座標→元画像座標: ×(nw/alw). 元画像座標→セル座標: (v-sx)*(w/sw)+x。
+        // 合成すると注釈座標 a に対し: X = (a*(nw/alw) - sx)*(w/sw)+x
+        const kx=(nw/alw)*(w/sw), ky=(nh/alh)*(photoH/sh);
+        ctx.translate(x - sx*(w/sw), y - sy*(photoH/sh));
+        ctx.scale(kx, ky);
+        ctx.lineCap='round'; ctx.lineJoin='round';
+        anno.forEach(item=>drawInkItem(ctx,item));
+        ctx.restore();
+      }
+      ctx.strokeStyle='#333';ctx.lineWidth=1.2;
       ctx.strokeRect(x,y,w,photoH);
       // 施工状況バッジ（写真の左上）
       if(cell.status && STATUS_TEXT[cell.status]){
@@ -2095,6 +2279,363 @@ async function exportLedgerPDF(){
   toast('PDFを出力しました','');
 }
 
+/* ===== 写真注釈エディタ（ペン＋図形フルセット）=====
+   写真ごとの注釈を photoInk[src] に保持（図面の strokes と同じアイテム形式・drawInkItem を共有）。
+   座標は写真の自然サイズを長辺1000に正規化した論理キャンバスで持ち、表示サイズが変わってもズレない。 */
+let photoInk={};            // src → [{type,color,width,...}...]
+let photoInkRedo={};        // src → redoスタック
+let pannoSrc=null;          // 現在編集中の写真src
+let pannoTool='pen';        // 'nav'|'pen'|'shape'
+let pannoPenErase=false;    // ペンモード中の「なぞり消しゴム」オン/オフ（free線のみ対象）
+let pannoErasing=false;     // 消去ドラッグ中フラグ
+let pannoShape='rect';      // 図形ツール時の種類
+let pannoColor='#E5372A';
+let pannoWidth=3.5;
+let pannoDrawing=null;      // 描画中のアイテム（free/図形）
+let pannoPolyDraft=null;    // 連続線の作図中アイテム
+let pannoHoverPt=null;      // 連続線のラバーバンド端点
+let pannoShiftHeld=false;   // Shift（水平/垂直/45°固定・正方形/正円）
+let pannoSelected=null;     // 選択中のアイテム（移動ツール時）
+let pannoDrag=null;         // {mode:'move'|'resize', item, handle?, startPt?, orig?}
+const pannoCanvas=$('#pannoCanvas'), pctx=pannoCanvas.getContext('2d');
+const pannoPhoto=$('#pannoPhoto');
+
+function photoInkArr(src){ return (photoInk[src]=photoInk[src]||[]); }
+function hasPhotoInk(src){ return (photoInk[src]||[]).length>0; }
+
+// 注釈用ヒットテスト（photoInk[pannoSrc] を対象に、図面と同じ純粋関数を流用）
+function pannoHitTest(pt){
+  const arr=photoInk[pannoSrc]||[];
+  for(let i=arr.length-1;i>=0;i--){
+    const item=arr[i];
+    if(SELECTABLE_TYPES.includes(item.type)&&pointInShapeBody(item,pt)) return item;
+  }
+  return null;
+}
+function pannoSnapshot(item){
+  return item.type==='poly'?{pts:item.pts.map(q=>({x:q.x,y:q.y}))}:{x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2};
+}
+// 画面ピクセル許容量を注釈論理座標に変換（ハンドルの当たり判定用）
+function pannoTol(px){ const r=pannoCanvas.getBoundingClientRect(); return px*pannoCanvas.width/r.width; }
+
+function openPanno(src){
+  pannoSrc=src;
+  pannoDrawing=null; pannoPolyDraft=null; pannoHoverPt=null;
+  setPannoTool('pen');
+  pannoPhoto.onload=()=>{ sizePannoCanvas(); redrawPanno(); };
+  pannoPhoto.src=src;
+  if(pannoPhoto.complete && pannoPhoto.naturalWidth){ sizePannoCanvas(); redrawPanno(); }
+  $('#panno').classList.add('show');
+  refreshPannoBtns();
+}
+function closePanno(){
+  if(pannoPolyDraft) finishPannoPoly();
+  $('#panno').classList.remove('show');
+  pannoSrc=null; pannoDrawing=null;
+  renderLedger(); // サムネイルの注釈バッジ・枚数を更新
+}
+// 注釈キャンバスの内部解像度を写真の実アスペクトに合わせる（長辺1000に正規化）
+function sizePannoCanvas(){
+  let nw=pannoPhoto.naturalWidth, nh=pannoPhoto.naturalHeight;
+  if(!nw||!nh){ nw=1000; nh=750; } // SVG等でnaturalが取れない場合のフォールバック
+  const ar=nw/nh;
+  let lw,lh;
+  if(nw>=nh){ lw=1000; lh=Math.round(1000/ar); }
+  else { lh=1000; lw=Math.round(1000*ar); }
+  pannoCanvas.width=lw; pannoCanvas.height=lh;
+}
+function redrawPanno(){
+  const w=pannoCanvas.width, h=pannoCanvas.height;
+  pctx.clearRect(0,0,w,h);
+  pctx.lineCap='round'; pctx.lineJoin='round';
+  const arr=photoInkArr(pannoSrc);
+  // 選択中アイテムが消えていたら選択解除（アンドゥ・全消去との整合）
+  if(pannoSelected && !arr.includes(pannoSelected)) pannoDeselect();
+  const draft={item:pannoPolyDraft, hoverPt:pannoHoverPt};
+  arr.forEach(item=>drawInkItem(pctx,item,draft));
+  if(pannoDrawing) drawInkItem(pctx,pannoDrawing,draft);
+  // 選択枠＋ハンドル（図面の redrawInk と同じ見た目）
+  if(pannoSelected){
+    pctx.save();
+    pctx.strokeStyle='#3B82F6'; pctx.lineWidth=Math.max(1.5,pannoTol(1.5)); pctx.setLineDash([pannoTol(6),pannoTol(4)]);
+    const b=shapeBounds(pannoSelected);
+    const pad=pannoTol(8);
+    pctx.strokeRect(b.x0-pad,b.y0-pad,(b.x1-b.x0)+pad*2,(b.y1-b.y0)+pad*2);
+    pctx.setLineDash([]);
+    const hs=shapeHandles(pannoSelected), hr=pannoTol(7);
+    for(const k in hs){
+      pctx.beginPath(); pctx.arc(hs[k].x,hs[k].y,hr,0,Math.PI*2);
+      pctx.fillStyle='#fff'; pctx.fill(); pctx.lineWidth=pannoTol(2); pctx.strokeStyle='#3B82F6'; pctx.stroke();
+    }
+    pctx.restore();
+  }
+  refreshPannoBtns();
+}
+function pannoDeselect(){ pannoSelected=null; pannoDrag=null; }
+function refreshPannoBtns(){
+  const has=hasPhotoInk(pannoSrc);
+  const hasRedo=(photoInkRedo[pannoSrc]||[]).length>0;
+  $('#pannoUndo').disabled=!has;
+  $('#pannoRedo').disabled=!hasRedo;
+  $('#pannoClear').disabled=!has;
+  $('#pannoErase').disabled=!pannoSelected;
+}
+// 画面座標→注釈論理座標
+function pannoToCanvas(cx,cy){
+  const r=pannoCanvas.getBoundingClientRect();
+  return { x:(cx-r.left)/r.width*pannoCanvas.width, y:(cy-r.top)/r.height*pannoCanvas.height };
+}
+// Shiftによる角度スナップ（45°刻み）
+function pannoSnap(x1,y1,x2,y2){
+  const dx=x2-x1, dy=y2-y1, dist=Math.hypot(dx,dy);
+  const ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4);
+  return {x:x1+dist*Math.cos(ang), y:y1+dist*Math.sin(ang)};
+}
+// ペン消しゴム：点ptが free 線（フリーハンド）に触れているか。触れていれば消す。
+// 図形（rect/ellipse/line/arrow/poly）は対象外。
+function pannoEraseAt(pt){
+  const arr=photoInk[pannoSrc]||[];
+  const tol=pannoTol(14); // 指の当たり半径（線幅も加味）
+  let changed=false;
+  for(let i=arr.length-1;i>=0;i--){
+    const it=arr[i];
+    if(it.type!=='free') continue; // ペン線のみ対象
+    const hitR=tol+(it.width||3)/2;
+    let hit=false;
+    if(it.pts.length===1){
+      hit=Math.hypot(pt.x-it.pts[0].x,pt.y-it.pts[0].y)<hitR;
+    } else {
+      for(let j=0;j<it.pts.length-1;j++){
+        if(distToSegment(pt,it.pts[j].x,it.pts[j].y,it.pts[j+1].x,it.pts[j+1].y)<hitR){ hit=true; break; }
+      }
+    }
+    if(hit){ arr.splice(i,1); changed=true; }
+  }
+  if(changed){ photoInkRedo[pannoSrc]=[]; redrawPanno(); }
+  return changed;
+}
+
+// ツール切替
+function setPannoTool(t){
+  if(t!=='shape' && pannoPolyDraft) finishPannoPoly();
+  if(t!=='nav') pannoDeselect(); // 描画系ツールに移ったら選択解除
+  if(t!=='pen'){ pannoPenErase=false; } // ペン以外に移ったら消去モード解除
+  pannoTool=t;
+  $('#pannoNav').classList.toggle('on',t==='nav');
+  $('#pannoPen').classList.toggle('on',t==='pen' && !pannoPenErase);
+  $('#pannoShapeBtn').classList.toggle('on',t==='shape');
+  // ペン消しゴムボタンはペンモード時のみ表示
+  $('#pannoPenErase').style.display = (t==='pen')?'':'none';
+  $('#pannoPenErase').classList.toggle('on', t==='pen' && pannoPenErase);
+  // 図形サブ選択・スタイル行の表示（消去モード中はスタイル不要）
+  $('#pannoShapes').classList.toggle('show',t==='shape');
+  $('#pannoStyle').classList.toggle('show',(t==='pen'&&!pannoPenErase)||t==='shape');
+  pannoCanvas.style.cursor = (t==='nav')?'default':'crosshair';
+  redrawPanno();
+}
+$('#pannoNav').addEventListener('click',()=>setPannoTool('nav'));
+$('#pannoPen').addEventListener('click',()=>{ pannoPenErase=false; setPannoTool('pen'); });
+$('#pannoShapeBtn').addEventListener('click',()=>setPannoTool('shape'));
+// ペン消しゴムのトグル
+$('#pannoPenErase').addEventListener('click',()=>{
+  pannoPenErase=!pannoPenErase;
+  setPannoTool('pen'); // ペンモードのまま表示状態を更新
+});
+
+// 図形サブ選択
+$('#pannoShapes').querySelectorAll('.ps-shape').forEach(b=>b.addEventListener('click',()=>{
+  pannoShape=b.dataset.shape;
+  $('#pannoShapes').querySelectorAll('.ps-shape').forEach(x=>x.classList.toggle('on',x===b));
+  if(pannoTool!=='shape') setPannoTool('shape');
+}));
+
+// ポインタ操作
+pannoCanvas.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  pannoCanvas.setPointerCapture(e.pointerId);
+  const pt=pannoToCanvas(e.clientX,e.clientY);
+  if(pannoTool==='nav'){
+    // 選択・移動・リサイズ（図面と同じ操作感）
+    const tol=pannoTol(12);
+    if(pannoSelected){
+      const h=hitHandle(pannoSelected,pt,tol);
+      if(h){ pannoDrag={mode:'resize',item:pannoSelected,handle:h}; redrawPanno(); return; }
+      if(pointInShapeBody(pannoSelected,pt)){
+        pannoDrag={mode:'move',item:pannoSelected,startPt:pt,orig:pannoSnapshot(pannoSelected)}; redrawPanno(); return;
+      }
+    }
+    const hit=pannoHitTest(pt);
+    if(hit){
+      pannoSelected=hit;
+      pannoDrag={mode:'move',item:hit,startPt:pt,orig:pannoSnapshot(hit)};
+    } else {
+      pannoDeselect();
+    }
+    redrawPanno();
+    return;
+  }
+  if(pannoTool==='pen'){
+    if(pannoPenErase){ pannoErasing=true; pannoEraseAt(pt); return; } // なぞり消去開始
+    pannoDrawing={type:'free',color:pannoColor,width:pannoWidth,pts:[pt]};
+  } else if(pannoTool==='shape'){
+    if(pannoShape==='poly'){
+      addPannoPolyPoint(pt); // 連続線はタップで点追加
+    } else {
+      pannoDrawing={type:pannoShape,color:pannoColor,width:pannoWidth,x1:pt.x,y1:pt.y,x2:pt.x,y2:pt.y};
+    }
+  }
+});
+pannoCanvas.addEventListener('pointermove',e=>{
+  const pt=pannoToCanvas(e.clientX,e.clientY);
+  // ペン消しゴム：なぞっている間、触れた free 線を消す
+  if(pannoErasing){ pannoEraseAt(pt); return; }
+  // 移動・リサイズ（移動ツール時）
+  if(pannoDrag){
+    const item=pannoDrag.item;
+    if(pannoDrag.mode==='move'){
+      const dx=pt.x-pannoDrag.startPt.x, dy=pt.y-pannoDrag.startPt.y;
+      if(item.type==='poly'){
+        item.pts.forEach((q,i)=>{ q.x=pannoDrag.orig.pts[i].x+dx; q.y=pannoDrag.orig.pts[i].y+dy; });
+      } else {
+        item.x1=pannoDrag.orig.x1+dx; item.y1=pannoDrag.orig.y1+dy;
+        item.x2=pannoDrag.orig.x2+dx; item.y2=pannoDrag.orig.y2+dy;
+      }
+    } else { // resize
+      const h=pannoDrag.handle;
+      if(item.type==='rect'||item.type==='ellipse'){
+        if(h==='nw'){item.x1=pt.x;item.y1=pt.y;} else if(h==='ne'){item.x2=pt.x;item.y1=pt.y;}
+        else if(h==='sw'){item.x1=pt.x;item.y2=pt.y;} else {item.x2=pt.x;item.y2=pt.y;}
+      } else if(item.type==='poly'){
+        const idx=+h.slice(1); item.pts[idx].x=pt.x; item.pts[idx].y=pt.y;
+      } else {
+        if(h==='p1'){item.x1=pt.x;item.y1=pt.y;} else {item.x2=pt.x;item.y2=pt.y;}
+      }
+    }
+    redrawPanno();
+    return;
+  }
+  if(pannoDrawing){
+    if(pannoDrawing.type==='free'){ pannoDrawing.pts.push(pt); }
+    else {
+      let ex=pt.x,ey=pt.y;
+      if(pannoShiftHeld){
+        if(pannoDrawing.type==='rect'||pannoDrawing.type==='ellipse'){
+          const s=Math.max(Math.abs(pt.x-pannoDrawing.x1),Math.abs(pt.y-pannoDrawing.y1));
+          ex=pannoDrawing.x1+Math.sign(pt.x-pannoDrawing.x1)*s;
+          ey=pannoDrawing.y1+Math.sign(pt.y-pannoDrawing.y1)*s;
+        } else {
+          const sn=pannoSnap(pannoDrawing.x1,pannoDrawing.y1,pt.x,pt.y); ex=sn.x; ey=sn.y;
+        }
+      }
+      pannoDrawing.x2=ex; pannoDrawing.y2=ey;
+    }
+    redrawPanno();
+  } else if(pannoPolyDraft){
+    // 連続線のラバーバンド
+    const last=pannoPolyDraft.pts[pannoPolyDraft.pts.length-1];
+    pannoHoverPt=pannoShiftHeld?pannoSnap(last.x,last.y,pt.x,pt.y):pt;
+    redrawPanno();
+  }
+});
+function pannoEndDraw(e){
+  // ペン消しゴムのなぞり終了
+  if(pannoErasing){ pannoErasing=false; return; }
+  // 移動・リサイズの終了
+  if(pannoDrag){ pannoDrag=null; redrawPanno(); return; }
+  if(!pannoDrawing) return;
+  const it=pannoDrawing;
+  let keep=true;
+  if(it.type==='free'){ keep=it.pts.length>=1; }
+  else { keep=Math.hypot(it.x2-it.x1,it.y2-it.y1)>=3; } // ゼロサイズの図形は残さない
+  if(keep){ photoInkArr(pannoSrc).push(it); photoInkRedo[pannoSrc]=[]; }
+  pannoDrawing=null;
+  redrawPanno();
+}
+pannoCanvas.addEventListener('pointerup',pannoEndDraw);
+pannoCanvas.addEventListener('pointercancel',pannoEndDraw);
+
+// 連続線
+let pannoLastTap=0, pannoLastPt=null;
+function addPannoPolyPoint(pt){
+  const now=Date.now();
+  // ダブルタップ（同じ位置・400ms以内）で終了
+  if(pannoPolyDraft && pannoLastPt && now-pannoLastTap<400 && Math.hypot(pt.x-pannoLastPt.x,pt.y-pannoLastPt.y)<12){
+    finishPannoPoly(); pannoLastTap=0; pannoLastPt=null; return;
+  }
+  if(!pannoPolyDraft){
+    pannoPolyDraft={type:'poly',color:pannoColor,width:pannoWidth,pts:[pt]};
+    photoInkArr(pannoSrc).push(pannoPolyDraft);
+    photoInkRedo[pannoSrc]=[];
+  } else {
+    const last=pannoPolyDraft.pts[pannoPolyDraft.pts.length-1];
+    pannoPolyDraft.pts.push(pannoShiftHeld?pannoSnap(last.x,last.y,pt.x,pt.y):pt);
+  }
+  pannoLastTap=now; pannoLastPt=pt; pannoHoverPt=null;
+  redrawPanno();
+}
+function finishPannoPoly(){
+  if(!pannoPolyDraft) return;
+  const pts=pannoPolyDraft.pts;
+  while(pts.length>=2){
+    const a=pts[pts.length-2], b=pts[pts.length-1];
+    if(Math.hypot(b.x-a.x,b.y-a.y)<4) pts.pop(); else break;
+  }
+  if(pts.length<2){ const arr=photoInk[pannoSrc]; if(arr&&arr[arr.length-1]===pannoPolyDraft)arr.pop(); }
+  pannoPolyDraft=null; pannoHoverPt=null; redrawPanno();
+}
+
+// Shiftキー
+window.addEventListener('keydown',e=>{ if(e.key==='Shift'&&$('#panno').classList.contains('show')){pannoShiftHeld=true;} });
+window.addEventListener('keyup',e=>{ if(e.key==='Shift'){pannoShiftHeld=false;} });
+
+// アンドゥ・リドゥ・全消去
+$('#pannoUndo').addEventListener('click',()=>{
+  if(pannoPolyDraft) finishPannoPoly();
+  const a=photoInk[pannoSrc]; if(a&&a.length){ (photoInkRedo[pannoSrc]=photoInkRedo[pannoSrc]||[]).push(a.pop()); redrawPanno(); }
+});
+$('#pannoRedo').addEventListener('click',()=>{
+  if(pannoPolyDraft) finishPannoPoly();
+  const r=photoInkRedo[pannoSrc]; if(r&&r.length){ (photoInk[pannoSrc]=photoInk[pannoSrc]||[]).push(r.pop()); redrawPanno(); }
+});
+$('#pannoClear').addEventListener('click',()=>{
+  if(!hasPhotoInk(pannoSrc)) return;
+  photoInk[pannoSrc]=[]; photoInkRedo[pannoSrc]=[]; pannoPolyDraft=null; pannoHoverPt=null; pannoDeselect(); redrawPanno();
+});
+// 選択中の図形を削除（図面の消しゴム相当）
+$('#pannoErase').addEventListener('click',()=>{
+  if(!pannoSelected) return;
+  const arr=photoInk[pannoSrc]||[];
+  const idx=arr.indexOf(pannoSelected);
+  if(idx>-1){ arr.splice(idx,1); photoInkRedo[pannoSrc]=[]; }
+  pannoDeselect();
+  redrawPanno();
+});
+$('#pannoDone').addEventListener('click',closePanno); // ← 戻る（左上）
+$('#pannoSave').addEventListener('click',closePanno); // ← 完了（右上）
+
+// 色パレット
+(function initPannoColors(){
+  const row=$('#pannoColors');
+  row.innerHTML=INK_COLORS.map((c,i)=>`<button class="ps-color ${i===0?'on':''}" data-color="${c}" style="background:${c}"></button>`).join('');
+  row.querySelectorAll('.ps-color').forEach(b=>b.addEventListener('click',()=>{
+    pannoColor=b.dataset.color;
+    row.querySelectorAll('.ps-color').forEach(x=>x.classList.toggle('on',x===b));
+  }));
+})();
+// 太さパレット
+(function initPannoWidths(){
+  const row=$('#pannoWidths');
+  const widths=[[2,5],[3.5,8],[6,12],[9,16]];
+  row.innerHTML=widths.map(([w,d],i)=>`<button data-width="${w}" class="${w===3.5?'on':''}"><span class="dotw" style="width:${d}px;height:${d}px"></span></button>`).join('');
+  row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    pannoWidth=+b.dataset.width;
+    row.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
+  }));
+})();
+// 図形サブ選択の初期選択（rect）
+$('#pannoShapes').querySelector('.ps-shape[data-shape="rect"]').classList.add('on');
+
+/* ===== measure: scale-aware distance tool ===== */
 function mmPerUnit(){ const d=dwg(); return (d&&d.mmPerUnit)||DEFAULT_MM_PER_UNIT; }
 function unitsToMm(u){ return u*mmPerUnit(); }
 function fmtLen(mm){

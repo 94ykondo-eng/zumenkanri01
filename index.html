@@ -113,6 +113,14 @@
        可視化（drawInkItem 共有で両方に反映）。(3) .panno-holder に touch-action:none を追加し待ち時間を排除。
        (4) .panno-canvas に user-select:none / -webkit-touch-callout:none を追加し選択・長押しメニューの引っかかりを抑制。
        [cleanup] 旧注釈エディタ（フェーズ1）の未使用・重複CSSを削除。
+  build v6.7 (ペン消しゴムが反応しない不具合を修正)  — 「ペン消しゴムボタンを押しても反応しない」への対策。
+       主因は実機Safariで、ボタン内の SVG アイコンがタップ座標を奪い、親ボタンの click が発火しないこと
+       （§6のタップ吸われ系と同種）。ドックボタンの svg に pointer-events:none を付与し、ボタン本体でタップを
+       受けるよう修正。あわせて (1) 消去モードがオンだと分かるよう .erase-on クラスで赤系に強調表示、
+       (2) 消去モード中はカーソルを変更、(3) ドック下部余白を 10px→16px + safe-area に増やしホームバーとの
+       重なりを回避。iPad風タッチ環境で「SVG中心タップでもトグルできる」ことをテストで確認。
+       同種のタップ不発を予防するため、図面ドック(.dock-btn)・トップバー(.icon-btn)・台帳の書き込みボタン
+       (.lphoto-anno)の svg にも pointer-events:none を横展開。
 -->
 <html lang="ja">
 <head>
@@ -158,7 +166,7 @@
     display:flex;align-items:center;justify-content:center;gap:8px;padding:0 12px;
     color:var(--text);font-size:13px;font-weight:500;transition:transform .08s, background .12s;
   }
-  .icon-btn svg{width:20px;height:20px;flex-shrink:0}
+  .icon-btn svg{width:20px;height:20px;flex-shrink:0;pointer-events:none}
   .icon-btn:active{transform:scale(.94);background:var(--panel3)}
   .icon-btn .lbl{font-size:12px;color:var(--muted)}
 
@@ -228,7 +236,7 @@
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;flex-shrink:0;
     font-size:11px;font-weight:600;transition:transform .08s, background .12s, color .12s;
   }
-  .dock-btn svg{width:24px;height:24px}
+  .dock-btn svg{width:24px;height:24px;pointer-events:none}
   .dock-btn:active{transform:scale(.9)}
   .dock-btn.on{background:rgba(229,55,42,.18);color:#FF8A7F;box-shadow:inset 0 0 0 1.5px rgba(229,55,42,.45)}
   .dock-btn.nav.on{background:rgba(34,196,138,.16);color:#7FE3C0;box-shadow:inset 0 0 0 1.5px rgba(34,196,138,.4)}
@@ -700,7 +708,7 @@
     background:rgba(11,14,19,.78);border:1px solid rgba(255,255,255,.22);color:#fff;
     display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);transition:.1s}
   .lphoto-anno:active{transform:scale(.9);background:var(--signal);color:var(--signal-ink)}
-  .lphoto-anno svg{width:19px;height:19px}
+  .lphoto-anno svg{width:19px;height:19px;pointer-events:none}
   .lphoto-anno.has{background:var(--signal);color:var(--signal-ink);border-color:var(--signal)}
   .lphoto-body{padding:11px 12px;display:flex;flex-direction:column;gap:9px}
   .lphoto-date{font-family:var(--mono);font-size:11px;color:var(--muted2)}
@@ -748,14 +756,16 @@
   .panno-holder img{display:block;max-width:100%;max-height:100%;user-select:none;-webkit-user-drag:none}
   .panno-canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair;
     -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-  /* ツールドック（下部） */
+  /* ツールドック（下部）。ホームバーと重ならないよう下部余白を確保 */
   .panno-dock{display:flex;align-items:center;gap:6px;padding:10px 12px;flex-shrink:0;flex-wrap:wrap;
-    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+    padding-bottom:calc(16px + env(safe-area-inset-bottom,0px));
     background:linear-gradient(0deg,#12181F,#161C25);border-top:1px solid var(--line);justify-content:center}
   .pd-btn{width:46px;height:46px;border-radius:11px;background:var(--panel2);border:1px solid var(--line);
     display:flex;align-items:center;justify-content:center;color:var(--text);transition:.1s}
-  .pd-btn svg{width:21px;height:21px}
+  .pd-btn svg{width:21px;height:21px;pointer-events:none}
   .pd-btn.on{background:var(--panel3);border-color:var(--signal);color:var(--signal)}
+  /* ペン消しゴムがオンのときは赤系で強調（消去モードと一目で分かるように） */
+  .pd-btn.erase-on{background:rgba(229,55,42,.18);border-color:var(--redpen);color:var(--redpen)}
   .pd-btn:active{transform:scale(.92)}
   .pd-btn:disabled{opacity:.35}
   .pd-sep{width:1px;height:30px;background:var(--line2);margin:0 3px}
@@ -824,7 +834,7 @@
   <span id="statusPill"></span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v6.6 · 書き始めの反応改善</span>
+  <span class="build-tag" title="機能ビルド番号">build v6.7 · 消しゴム修正</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -2503,13 +2513,14 @@ function setPannoTool(t){
   $('#pannoNav').classList.toggle('on',t==='nav');
   $('#pannoPen').classList.toggle('on',t==='pen' && !pannoPenErase);
   $('#pannoShapeBtn').classList.toggle('on',t==='shape');
-  // ペン消しゴムボタンはペンモード時のみ表示
+  // ペン消しゴムボタンはペンモード時のみ表示。オン時は赤系で強調。
   $('#pannoPenErase').style.display = (t==='pen')?'':'none';
-  $('#pannoPenErase').classList.toggle('on', t==='pen' && pannoPenErase);
+  $('#pannoPenErase').classList.toggle('erase-on', t==='pen' && pannoPenErase);
   // 図形サブ選択・スタイル行の表示（消去モード中はスタイル不要）
   $('#pannoShapes').classList.toggle('show',t==='shape');
   $('#pannoStyle').classList.toggle('show',(t==='pen'&&!pannoPenErase)||t==='shape');
-  pannoCanvas.style.cursor = (t==='nav')?'default':'crosshair';
+  // カーソル：消去モードは専用、描画系はcrosshair、移動はdefault
+  pannoCanvas.style.cursor = (t==='nav')?'default':((t==='pen'&&pannoPenErase)?'cell':'crosshair');
   redrawPanno();
 }
 $('#pannoNav').addEventListener('click',()=>setPannoTool('nav'));

@@ -381,6 +381,30 @@
        #btnNoDwgOpen ボタンを撤去。説明文で「左上の図面リストを開き」と案内済みのため、
        ボタンは冗長と判断し削除（本文テキストはそのまま）。
 -->
+
+<!--
+  build v7.25 (Googleドライブ保存をApps Script経由に置き換え)  — v7.9〜で実装していたOAuth方式
+       （個人のGoogleログインが必要）を全廃し、Google Apps Script の「ウェブアプリ」にPOSTする方式に
+       完全移行。フィールドの人はGoogleへのログイン操作なしで保存できる（GASはデプロイした人の権限で
+       実行されるため）。
+       [削除] DRIVE_*定数、GIS(Google Identity Services)読み込み、ensureDriveToken、
+       driveFindFolder/driveCreateFolder/driveFindFile、multipart構築、旧saveToDrive一式、
+       クライアントID入力モーダルをすべて撤去。
+       [新設] gasUrl()にWebアプリURLをlocalStorage保持。saveToGas()がbuildGasPayload()の結果を
+       text/plain で POST（GASのdoPostはCORSプリフライトに弱いため、プリフライトを避ける目的で
+       Content-Typeをtext/plainにしている。GAS側はe.postData.contentsをJSON.parseすれば読める）。
+       [保存形式] 写真は個別の画像ファイルとしてDriveに保存し、drawings/pins/strokes/ledger等の
+       構造化データは別途 zumen-backup.json に。p.photosの各dataURLはbuildGasPayload()内で
+       ファイル名（photos配列）に差し替えたスナップショットを作ってから送る（元のpins/dataURLは
+       アプリ内表示用として変更しない）。
+       [ファイル名の安定化・重複防止] 当初は配列内の位置(index)をファイル名に使っていたが、写真の
+       追加・削除で位置がずれると保存のたびに別名の重複ファイルがDriveに増え続けるバグに気づき、
+       FNV-1a（32bit）で写真データ自体から安定したIDを生成する方式に修正。同じ写真は常に同じ
+       ファイル名になり、再保存時にGAS側で同名ファイルを安全に上書きできる。
+       [GASコード] /mnt/user-data/outputs/gas-code/Code.gs としてユーザーへ提供。doPostで
+       写真（trash→再作成方式でバイナリを安全に更新）とJSONを保存し、フォルダは
+       「図面共有システム_バックアップ」/「photos」の構成。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1230,7 +1254,7 @@
   <span id="statusPill"></span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.24 · 空状態ボタンを削除</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.25 · GAS経由のDrive保存に移行</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -1543,31 +1567,30 @@
   </div>
 </div>
 
-<!-- Googleドライブ連携の設定 -->
-<div class="cal-scrim" id="driveSetupScrim">
+<!-- Googleドライブ連携の設定（Apps Script経由） -->
+<div class="cal-scrim" id="gasSetupScrim">
   <div class="cal-box">
     <div class="cal-head">
       <h3>Googleドライブ連携の設定</h3>
-      <button class="close-x" id="driveSetupClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <button class="close-x" id="gasSetupClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
-    <p class="cal-desc">初回のみ、Google Cloud Console で発行した「OAuthクライアントID」が必要です（無料）。</p>
+    <p class="cal-desc">Google Apps Script（Webアプリ）を経由して保存します。初回のみ、発行したWebアプリのURLを貼り付けてください。</p>
     <ol class="drive-steps">
-      <li>Google Cloud Console でプロジェクトを作成</li>
-      <li>「APIとサービス」→ ライブラリ で <b>Google Drive API</b> を有効化</li>
-      <li>「OAuth同意画面」を設定（テストユーザーに自分のGoogleアカウントを追加）</li>
-      <li>「認証情報」→「OAuthクライアントID」を作成。種類は<b>ウェブアプリケーション</b></li>
-      <li>「承認済みのJavaScript生成元」に、このアプリを開いているURL（例：<span class="mono">https://xxxx.github.io</span>）を追加</li>
-      <li>発行された <span class="mono">〜.apps.googleusercontent.com</span> を下に貼り付け</li>
+      <li><span class="mono">script.google.com</span> で新しいプロジェクトを作成</li>
+      <li>提供したコードを貼り付けて保存</li>
+      <li>右上「デプロイ」→「新しいデプロイ」→ 種類は<b>ウェブアプリ</b></li>
+      <li>「次のユーザーとして実行」は<b>自分</b>、「アクセスできるユーザー」は<b>全員</b>を選択</li>
+      <li>発行された <span class="mono">https://script.google.com/macros/s/.../exec</span> を下に貼り付け</li>
     </ol>
     <div class="cal-fields">
       <div class="cal-field">
-        <label class="cal-lbl" for="driveClientIdInput">クライアントID</label>
-        <div class="cal-field-in"><input type="text" id="driveClientIdInput" class="cal-input" style="text-align:left;font-family:var(--mono);font-size:12.5px" autocomplete="off" placeholder="xxxx.apps.googleusercontent.com"></div>
+        <label class="cal-lbl" for="gasUrlInput">WebアプリのURL</label>
+        <div class="cal-field-in"><input type="text" id="gasUrlInput" class="cal-input" style="text-align:left;font-family:var(--mono);font-size:12.5px" autocomplete="off" placeholder="https://script.google.com/macros/s/xxxx/exec"></div>
       </div>
     </div>
     <div class="cal-actions imp-actions">
-      <button class="btn-cancel" id="driveSetupCancel">キャンセル</button>
-      <button class="btn-primary" id="driveSetupSave">保存して連携</button>
+      <button class="btn-cancel" id="gasSetupCancel">キャンセル</button>
+      <button class="btn-primary" id="gasSetupSave">保存して連携</button>
     </div>
   </div>
 </div>
@@ -3113,187 +3136,149 @@ async function renderLedgerPage(cells,pg,pageCount,d,SC){
   return cv;
 }
 
-/* ===== Googleドライブへの保存 =====
-   Google Identity Services（GIS）でOAuthのアクセストークンを取得し、Drive API v3 を fetch で直接叩く
-   （gapiクライアントは使わず軽量に保つ＝単一HTMLファイルの方針を踏襲）。
-   scope は drive.file（アプリが作成したファイルのみアクセス可＝安全側）＋ openid email profile（表示用に
-   接続アカウントのメールを取得するだけ）。保存先はユーザーの通常のDrive上に見えるフォルダ（指定どおり）。
-   クライアントIDは利用者ごとに Google Cloud Console で発行してもらう必要があるため、localStorage に
-   保持して初回のみ入力を求める。 */
-const DRIVE_FOLDER_NAME='図面共有システム_バックアップ';
-const DRIVE_FILE_NAME='zumen-backup.json';
-const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file openid email profile';
-const DRIVE_API='https://www.googleapis.com/drive/v3';
-const DRIVE_UPLOAD_API='https://www.googleapis.com/upload/drive/v3/files';
 
+
+/* ===== Google Apps Script経由の保存 =====
+   個人のGoogleログイン（OAuth）は不要。GASの「ウェブアプリ」に生データをPOSTし、GAS側（デプロイした
+   本人の権限で実行）がDriveへ保存する。フィールドの人はログイン操作なしでそのまま保存できる。
+   [保存形式] 写真は個別の画像ファイルとしてDriveに保存し（単体で開ける／容量が見やすい）、
+   drawings/pins/strokes/ledger等の構造化データは別途 zumen-backup.json にまとめる。
+   写真本体はアプリ内では引き続きdataURLとして保持（表示用）。バックアップ時だけGASへ渡し、
+   JSON側には photoRef（枠キー→ファイル名）だけを残して重複を避ける。 */
 function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
 function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
-function driveClientId(){ return lsGet('driveClientId')||''; }
+function gasUrl(){ return lsGet('gasUrl')||''; }
 
-let gisClient=null, driveToken=null, driveTokenExp=0;
-let gisLoading=null;
-function loadGIS(){
-  if(window.google && window.google.accounts && window.google.accounts.oauth2) return Promise.resolve();
-  if(gisLoading) return gisLoading;
-  gisLoading=new Promise((res,rej)=>{
-    const s=document.createElement('script');
-    s.src='https://accounts.google.com/gsi/client';
-    s.onload=()=>res(); s.onerror=()=>{ gisLoading=null; rej(new Error('GIS load failed')); };
-    document.head.appendChild(s);
+// dataURL(base64)からMIMEタイプと拡張子を取り出す
+function dataUrlParts(src){
+  const m=/^data:([^;]+);base64,(.*)$/.exec(src||'');
+  if(!m) return null;
+  const mime=m[1], base64=m[2];
+  const ext=mime.split('/')[1]==='jpeg'?'jpg':(mime.split('/')[1]||'bin');
+  return {mime,base64,ext};
+}
+// ファイル名として安全な文字列に（記号除去・長さ制限）
+function safeFileSegment(s){
+  return String(s||'').replace(/[\\/:*?"<>|]/g,'_').replace(/\s+/g,'_').slice(0,40) || 'x';
+}
+// 文字列の簡易ハッシュ（FNV-1a, 32bit）。写真データ自体から安定した短いIDを作る。
+// これにより、写真の並び順が変わっても毎回同じファイル名になり、保存を繰り返しても
+// Drive側に重複ファイルが増えない（同じ写真は同じ名前に上書きされる）。
+function fnv1aHash(str){
+  let h=0x811c9dc5;
+  for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,0x01000193); }
+  return (h>>>0).toString(36);
+}
+// バックアップ対象は「全部」：図面・ピン・朱書き/図形/計測・撮影計画・台帳メタ。
+// 写真はここでは photoRef（キー→ファイル名の対応）に差し替え、実体は別途photos配列でGASへ渡す。
+function buildGasPayload(){
+  const photos=[]; // [{key, filename, mime, base64}]
+  const seen={}; // src(dataURL) → filename の使い回し（同じ写真が複数箇所から参照されるケースはない前提だが念のため）
+  function registerPhoto(src, hintParts){
+    if(seen[src]) return seen[src];
+    const parts=dataUrlParts(src);
+    if(!parts) return null;
+    const stableId=fnv1aHash(src); // 位置に依存しない安定ID（重複ファイル防止）
+    const filename=hintParts.map(safeFileSegment).join('_')+'_'+stableId+'.'+parts.ext;
+    photos.push({key:src, filename, mime:parts.mime, base64:parts.base64});
+    seen[src]=filename;
+    return filename;
+  }
+  // pins[].photos を差し替えたスナップショットを作る（元データは変更しない）
+  const pinsOut={};
+  Object.keys(pins).forEach(dwgId=>{
+    const d=drawings.find(x=>x.id===dwgId);
+    pinsOut[dwgId]=(pins[dwgId]||[]).map(p=>{
+      const refs=(p.photos||[]).map((src,i)=>{
+        const fn=registerPhoto(src,[d?d.name:dwgId, p.title||p.id, 'photo'+(i+1)]);
+        return fn?{filename:fn}:null;
+      }).filter(Boolean);
+      return Object.assign({},p,{photos:refs});
+    });
   });
-  return gisLoading;
+  return {
+    data:{
+      schema:2, savedAt:new Date().toISOString(), appVersion:'v7.25',
+      drawings, pins:pinsOut, strokes, ledgerPhotoMeta, ledgerPinMeta, ledgerPlan,
+      dwgSeq, slotSeq
+    },
+    photos
+  };
 }
-// アクセストークンを確保（有効なら使い回し、無ければGoogleの同意ポップアップ）
-function ensureDriveToken(){
-  return new Promise(async (resolve,reject)=>{
-    if(driveToken && Date.now()<driveTokenExp-30000){ resolve(driveToken); return; }
-    const clientId=driveClientId();
-    if(!clientId){ reject(new Error('NO_CLIENT_ID')); return; }
-    try{ await loadGIS(); }catch(e){ reject(e); return; }
-    if(!gisClient){
-      gisClient=google.accounts.oauth2.initTokenClient({client_id:clientId, scope:DRIVE_SCOPE, callback:()=>{}});
-    }
-    gisClient.callback=async(resp)=>{
-      if(!resp || resp.error){ reject(new Error((resp&&resp.error)||'auth failed')); return; }
-      driveToken=resp.access_token;
-      driveTokenExp=Date.now()+((resp.expires_in||3300)*1000);
-      try{
-        const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${driveToken}`}});
-        if(r.ok){ const info=await r.json(); if(info.email) lsSet('driveEmail',info.email); }
-      }catch(e){ /* 表示用の付随情報なので失敗しても保存自体は続行 */ }
-      resolve(driveToken);
-    };
-    gisClient.requestAccessToken({prompt:''});
-  });
-}
-async function driveFindFolder(token){
-  const q=encodeURIComponent(`name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  const r=await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name)&spaces=drive`,{headers:{Authorization:`Bearer ${token}`}});
-  if(!r.ok) throw new Error('drive list failed: '+r.status);
-  const d=await r.json();
-  return (d.files&&d.files[0])?d.files[0].id:null;
-}
-async function driveCreateFolder(token){
-  const r=await fetch(`${DRIVE_API}/files`,{
-    method:'POST', headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
-    body:JSON.stringify({name:DRIVE_FOLDER_NAME, mimeType:'application/vnd.google-apps.folder'})
-  });
-  if(!r.ok) throw new Error('folder create failed: '+r.status);
-  return (await r.json()).id;
-}
-async function driveFindFile(token,folderId){
-  const q=encodeURIComponent(`name='${DRIVE_FILE_NAME}' and '${folderId}' in parents and trashed=false`);
-  const r=await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name)&spaces=drive`,{headers:{Authorization:`Bearer ${token}`}});
-  if(!r.ok) throw new Error('drive list failed: '+r.status);
-  const d=await r.json();
-  return (d.files&&d.files[0])?d.files[0].id:null;
-}
-// multipart/related の本体を組み立て（メタ情報＋JSON本体）
-function buildMultipart(meta,jsonStr){
-  const boundary='zumen_'+Date.now().toString(36);
-  const body=
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n`+
-    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${jsonStr}\r\n`+
-    `--${boundary}--`;
-  return {body,boundary};
-}
-async function driveUploadFile(token,folderId,fileId,jsonStr){
-  const meta=fileId?{}:{name:DRIVE_FILE_NAME,parents:[folderId]};
-  const {body,boundary}=buildMultipart(meta,jsonStr);
-  const url=fileId?`${DRIVE_UPLOAD_API}/${fileId}?uploadType=multipart`:`${DRIVE_UPLOAD_API}?uploadType=multipart`;
-  const r=await fetch(url,{
-    method:fileId?'PATCH':'POST',
-    headers:{Authorization:`Bearer ${token}`,'Content-Type':`multipart/related; boundary=${boundary}`},
-    body
-  });
-  if(!r.ok) throw new Error('upload failed: '+r.status);
-  return r.json();
-}
-// バックアップ対象は「全部」：図面リスト・ピン・朱書き/図形/計測・撮影計画・台帳メタ
-function buildBackupPayload(){
-  return JSON.stringify({
-    schema:1, savedAt:new Date().toISOString(), appVersion:'v7.9',
-    drawings, pins, strokes, ledgerPhotoMeta, ledgerPinMeta, ledgerPlan,
-    dwgSeq, slotSeq
-  });
-}
-async function saveToDrive(){
-  const clientId=driveClientId();
-  if(!clientId){ openDriveSetup(); return; }
+async function saveToGas(){
+  const url=gasUrl();
+  if(!url){ openGasSetup(); return; }
   toast('Googleドライブへ保存中…','');
   try{
-    const token=await ensureDriveToken();
-    let folderId=lsGet('driveFolderId');
-    if(!folderId){ folderId=await driveFindFolder(token) || await driveCreateFolder(token); lsSet('driveFolderId',folderId); }
-    let fileId=lsGet('driveFileId');
-    if(!fileId){ fileId=await driveFindFile(token,folderId); if(fileId) lsSet('driveFileId',fileId); }
-    const payload=buildBackupPayload();
-    const result=await driveUploadFile(token,folderId,fileId,payload);
-    lsSet('driveFileId',result.id);
-    lsSet('driveLastSaved', new Date().toISOString());
-    renderDriveBox();
-    toast('Googleドライブへ保存しました','ok');
+    const payload=buildGasPayload();
+    // GASのdoPostはCORSプリフライトに弱いため text/plain で送る（GAS側でJSON.parseすれば問題ない）
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const result=await r.json();
+    if(!result || result.ok!==true) throw new Error((result&&result.error)||'unknown error');
+    lsSet('gasLastSaved', new Date().toISOString());
+    renderGasBox();
+    toast(`Googleドライブへ保存しました（写真${payload.photos.length}枚）`,'ok');
   }catch(e){
     console.error(e);
-    if(e.message==='NO_CLIENT_ID'){ openDriveSetup(); return; }
-    toast('Googleドライブへの保存に失敗しました。接続設定をご確認ください','warn');
+    toast('Googleドライブへの保存に失敗しました。設定・通信環境をご確認ください','warn');
   }
 }
-function resetDriveSetup(){
-  ['driveClientId','driveEmail','driveFolderId','driveFileId','driveLastSaved'].forEach(lsDel);
-  driveToken=null; driveTokenExp=0; gisClient=null;
-  renderDriveBox();
+function resetGasSetup(){
+  ['gasUrl','gasLastSaved'].forEach(lsDel);
+  renderGasBox();
   toast('Googleドライブの接続設定をリセットしました','warn');
 }
-function renderDriveBox(){
+function renderGasBox(){
   const wrap=$('#driveBoxWrap'); if(!wrap) return;
-  const clientId=driveClientId();
-  const email=lsGet('driveEmail');
-  const last=lsGet('driveLastSaved');
-  if(!clientId){
+  const url=gasUrl();
+  const last=lsGet('gasLastSaved');
+  if(!url){
     wrap.innerHTML=`<div class="drive-box">
-      <p class="p-note">この図面データ一式（図面・ピン・朱書き・計測・台帳・写真）をGoogleドライブに保存できます。ドライブ上に見えるフォルダを作って保存するので、他の人とも共有できます。初回のみ設定が必要です。</p>
-      <button class="btn-outline" id="btnDriveSetup">＋ Googleドライブ連携を設定</button>
+      <p class="p-note">この図面データ一式（図面・ピン・朱書き・計測・台帳・写真）をGoogleドライブに保存できます。写真は個別の画像ファイル、それ以外のデータはJSONとして保存されます。Google Apps Scriptの設定が初回のみ必要です。</p>
+      <button class="btn-outline" id="btnGasSetup">＋ Googleドライブ連携を設定</button>
     </div>`;
   }else{
     wrap.innerHTML=`<div class="drive-box">
       <div class="drive-acct">
-        <span class="drive-email ${email?'':'muted'}">${email?escHtml(email):'未接続（保存時にログインします）'}</span>
-        <button class="link-btn" id="btnDriveReset">設定をリセット</button>
+        <span class="drive-email">${escHtml(url)}</span>
+        <button class="link-btn" id="btnGasReset">設定をリセット</button>
       </div>
       <div class="drive-last">${last?`最終保存：${new Date(last).toLocaleString('ja-JP')}`:'まだ保存されていません'}</div>
-      <button class="btn-primary drive-save-btn" id="btnDriveSave">
+      <button class="btn-primary drive-save-btn" id="btnGasSave">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15a4 4 0 010-8 5 5 0 019.9-1A4.5 4.5 0 0119 15H4z"/></svg>
         Googleドライブへ保存
       </button>
     </div>`;
   }
-  bindDriveBox(); // innerHTML を差し替えたので、その都度ボタンへ結び直す
+  bindGasBox(); // innerHTML を差し替えたので、その都度ボタンへ結び直す
 }
-function bindDriveBox(){
-  const s1=$('#btnDriveSetup'); if(s1) s1.addEventListener('click',openDriveSetup);
-  const s2=$('#btnDriveReset'); if(s2) s2.addEventListener('click',()=>{ if(confirm('Googleドライブの接続設定をリセットします。よろしいですか？')) resetDriveSetup(); });
-  const s3=$('#btnDriveSave'); if(s3) s3.addEventListener('click',saveToDrive);
+function bindGasBox(){
+  const s1=$('#btnGasSetup'); if(s1) s1.addEventListener('click',openGasSetup);
+  const s2=$('#btnGasReset'); if(s2) s2.addEventListener('click',()=>{ if(confirm('Googleドライブの接続設定をリセットします。よろしいですか？')) resetGasSetup(); });
+  const s3=$('#btnGasSave'); if(s3) s3.addEventListener('click',saveToGas);
 }
-function openDriveSetup(){
-  $('#driveClientIdInput').value=driveClientId();
-  $('#driveSetupScrim').classList.add('show');
+function openGasSetup(){
+  $('#gasUrlInput').value=gasUrl();
+  $('#gasSetupScrim').classList.add('show');
 }
-function closeDriveSetup(){ $('#driveSetupScrim').classList.remove('show'); }
-function commitDriveSetup(){
-  const v=($('#driveClientIdInput').value||'').trim();
-  if(!v){ toast('クライアントIDを入力してください','warn'); return; }
-  lsSet('driveClientId',v);
-  gisClient=null; driveToken=null; driveTokenExp=0; // クライアントIDが変わった可能性があるので作り直す
-  closeDriveSetup();
-  renderDriveBox();
+function closeGasSetup(){ $('#gasSetupScrim').classList.remove('show'); }
+function commitGasSetup(){
+  const v=($('#gasUrlInput').value||'').trim();
+  if(!v){ toast('WebアプリのURLを入力してください','warn'); return; }
+  if(!/^https:\/\/script\.google\.com\/macros\/s\//.test(v)){
+    toast('URLの形式が正しくないようです（script.google.com/macros/s/…/exec）','warn'); return;
+  }
+  lsSet('gasUrl',v);
+  closeGasSetup();
+  renderGasBox();
   toast('設定を保存しました。「Googleドライブへ保存」から連携できます','ok');
 }
-$('#driveSetupClose').addEventListener('click',closeDriveSetup);
-$('#driveSetupCancel').addEventListener('click',closeDriveSetup);
-$('#driveSetupSave').addEventListener('click',commitDriveSetup);
-$('#driveSetupScrim').addEventListener('click',e=>{ if(e.target.id==='driveSetupScrim') closeDriveSetup(); });
+$('#gasSetupClose').addEventListener('click',closeGasSetup);
+$('#gasSetupCancel').addEventListener('click',closeGasSetup);
+$('#gasSetupSave').addEventListener('click',commitGasSetup);
+$('#gasSetupScrim').addEventListener('click',e=>{ if(e.target.id==='gasSetupScrim') closeGasSetup(); });
 
 /* ===== 出力プレビュー =====
    PDFと同じページ組みで画面に表示する。jsPDFは不要なのでオフラインでも確認できる。 */
@@ -4500,7 +4485,7 @@ function renderContext(){
       <div class="switch ${d2.cached?'on':''}" data-cache="${d2.id}"><div class="knob"></div></div></div>`;
   });
   $('#paneCache').innerHTML=ch;
-  renderDriveBox();
+  renderGasBox();
 
   // pin index: which object is where, with photos（未選択時は pinList() が空配列を返すので安全）
   const list=pinList();

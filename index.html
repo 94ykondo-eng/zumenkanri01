@@ -121,6 +121,121 @@
        重なりを回避。iPad風タッチ環境で「SVG中心タップでもトグルできる」ことをテストで確認。
        同種のタップ不発を予防するため、図面ドック(.dock-btn)・トップバー(.icon-btn)・台帳の書き込みボタン
        (.lphoto-anno)の svg にも pointer-events:none を横展開。
+  build v6.8 (消しゴムが押せない不具合の真因を修正)  — v6.7 のSVG対策では直らず、実機で「消しゴムボタンだけ
+       押しても赤く光らない（他のボタンは押せる）」が継続。真因は、消しゴムを押すと setPannoTool 内で
+       スタイル行（色・太さ）を非表示にしていたため、ドックのレイアウトが上にずれてボタン自体が移動し、
+       iOS Safari が「押した要素」と「離した要素」の不一致で click を発火させないこと。消しゴムだけで起きたのは、
+       他のツールではスタイル行が消えなかったため。対策としてスタイル行は消去モードでも表示したままにし
+       （高さを保持）、代わりに .dimmed で薄く無効化して使わないことを示す。iPad風タッチ環境で「押しても
+       ボタン位置が動かない」「連続タップでもトグルがずれない」ことをテストで確認。
+       【教訓】タップで反応する要素の周辺レイアウトを、その同じタップの中で変化させてはいけない
+       （ボタンが動くと iOS の click が不発になる）。表示/非表示ではなく opacity+pointer-events で無効化する。
+  build v6.9 (図面側にもペン消しゴムを実装)  — 「消しゴムが機能しない」の対象は写真ではなく【図面】だった。
+       図面ドックの消しゴムは従来「図形を選択してから削除」専用で、未選択時はグレーアウト。そのためペンで
+       描いた線を消す手段がなかった（v6.2 のなぞり消去は写真注釈にしか実装していなかった）。
+       図面にも同じ「なぞって消す」を実装：ペンモードでは消しゴムがトグルになり（editBlockReason を尊重）、
+       なぞった軌跡に触れた free 線を線全体単位で消す。図形(rect/ellipse/line/arrow/poly)と計測(measure)は対象外。
+       図形モードでは従来どおり選択削除。当たり判定は 14px/view.scale で、ズーム倍率によらず指の感覚を一定に。
+       ツール切替で消去モードは自動解除。v6.8 の教訓に従い、トグルしてもドックのレイアウトは変化させていない
+       （ボタン位置不変をテストで確認）。
+       [cleanup] 引き継ぎサマリー作成時の点検で、旧注釈エディタの重複CSS（.panno を z-index:145 で上書き・
+       .panno-done を二重定義・未使用の .panno-x）が残っていたのを削除。z-index は
+       台帳110 → 縮尺120 → 確認130 → ライトボックス140 → 注釈エディタ150 に整理。
+
+  build v7.0 (バグ修正：写真台帳バッジの枚数が更新されない)  — ピンに写真を追加しても、図面リストの
+       「写真台帳 n」バッジが 0 のまま更新されなかった。原因は枚数の再計算が renderList() の中にしかなく、
+       写真の追加・削除の3経路（ファイル選択・サンプル生成・グリッドの削除ボタン）が renderPhotoGrid /
+       renderPins / renderContext しか呼んでいなかったため。ドロワーを開く openDrawer() も再描画しないので
+       開き直しても直らず、台帳を開閉するか図面を選び直すまで古い値が残っていた。
+       修正は2段構え：(1) 追加・削除の3経路で renderList() を呼ぶ、(2) 図面リストを開く直前にも renderList()
+       を通す（今後データ経路が増えてもバッジが腐らない根本側の担保）。
+
+  build v7.1 (図面の新規取り込み)  — 図面リストのヘッダーに「＋ 新規」を追加。ファイルを選ぶと取り込み
+       ダイアログ（プレビュー／図面名＝ファイル名を初期値／分類＝既存から選択＋新規／階数）が出て、
+       v1.0・最新公開・保存済（ローカル取り込みのため）として drawings に追加し、その図面を開く。
+       PDF は pdf.js を jsPDF と同じくCDNから必要時ロード（オフラインでは不可、失敗時はダイアログ内に
+       理由を表示）。1ページ目のみを 2200px 相当で画像化。画像は PNG/JPEG/SVG に対応（SVGで
+       width/height 未指定だとブラウザが既定サイズ 300×150 基準を返すため viewBox を優先して読む）。
+       [座標系] 従来 CW/CH は 880×620 の定数で、ピン・朱書き・計測がすべてこの単位系に固定されていた。
+       取り込み図面は縦横比が異なるため、図面ごとに sheetW/sheetH を持たせ renderViewer 冒頭の
+       applySheetSize() で切り替える方式に変更（BASE_CW/BASE_CH=880×620 が既定なので内蔵3図面の挙動は不変）。
+       単位系は長辺1600に正規化（inkLayer のキャンバス実サイズ＝CW×CH のため、メモリを一定に保つ）。
+       画像自体は元解像度のまま貼るのでズームしても粗くならない。
+       [注意] 取り込み図面の縮尺は未校正。追加直後にトーストで「縮尺」設定を案内している。
+
+  build v7.2 (撮影計画＝写真の枠を事前に用意)  — 「撮ってから台帳に載せる」から「先に枠を用意し、
+       埋めていく」へ。撮り忘れを未然に防ぐのが目的。
+       枠は独立ストア ledgerPlan[図面ID][ピンID]=[{id,src,meta}] に持ち、pins[].photos /
+       ledgerPhotoMeta には手を入れない（§4のデータ方針を踏襲）。枠に施工状況・記述を先に書いておける。
+       撮影して写真が枠に紐づく（src が入る）と、その計画内容を ledgerPhotoMeta へ引き継ぎ、以後の編集は
+       従来の写真セルのUIをそのまま使う（editの入口が二重にならないよう metaOf() で data-src / data-slot を
+       同じハンドラで処理）。写真をピンシートで削除すると、枠は消さず「未撮影」に戻す（記述は枠側へ退避）。
+       ピンごとに「施工前・中・後の3枠」テンプレ／個別追加。台帳はこれまで「写真のあるピン」しか出さな
+       かったが、枠を作れるよう全ピンを表示するよう変更。
+       図面リストのバッジは「撮影済/計画（例 3/8）」に変更し、未撮影があれば赤。台帳トップにも進捗を表示。
+       PDFは未撮影の枠を点線＋「未撮影」で印刷（施工状況は灰バッジ）。drawCell の共通部分を
+       drawCellStatus / drawCellLines に切り出し。
+
+  build v7.3 (写真ごとの「場所」欄)  — これまで場所はピン共通の「位置（階・通り芯）」しかなく、同じピンの
+       写真すべてで同一だった。写真1枚ごとに「場所」を持たせ、より細かい撮影位置を残せるように。
+       ledgerPhotoMeta と枠(slot.meta)の両方に place を追加（旧データは photoMeta() 側で補完）。
+       枠に先に書いた場所は、撮影時に写真メタへ引き継ぐ／写真削除時は枠へ退避（施工状況・記述と同じ扱い）。
+       PDFは写真直下に「場所：〜」の行を1行追加（記入がある場合のみ）。セル高さを lineH×(3+1) に拡張して
+       A4横2段のグリッドに収まることを確認済み。
+
+  build v7.4 (出力プレビュー)  — 台帳トップに「プレビュー」を追加。PDFと同じページ組みで画面に表示し、
+       そこから「このままPDF出力」もできる。プレビューは Canvas だけで作るので jsPDF 不要＝オフラインでも
+       仕上がりを確認できる（出力自体は従来どおりオンライン時のみ）。
+       [重要] プレビューと出力がズレると意味がないので、ページ組みは LPAGE 定数＋renderLedgerPage() に
+       一本化し、exportLedgerPDF もこれを呼ぶだけにした（従来は出力側に直書きだった）。倍率だけ
+       プレビュー1.6／出力2.5で切り替える。1ページずつ描いて順に追加（生成中に閉じたら中断）。
+       z-index はプレビュー115（台帳110の上、縮尺120の下）。
+
+  build v7.5 (出力の記入欄を常時表示)  — 出力/プレビューのセルで、記入のある行だけ罫線を描いていたため、
+       未記入だと写真の下が空白になり台帳の体裁にならなかった。「場所」1行＋記述3段（LPAGE.maxLines）を
+       常に罫線付きで描くように変更。印刷してから手書きで埋める運用に対応。記入が3行を超える場合は
+       超えた分も描画する（セル高さの基準は従来どおり 場所1＋記述3）。
+
+  build v7.6 (出力の最下段を2段分の1マスに)  — 指示画像の実測（罫線 y=76/94/111/129、囲みが94〜129）に
+       もとづき、記述欄の2段目と3段目を統合。出力/プレビューのセルは
+       「場所1行 ＋ 記述1行 ＋ 2段ぶんの大きい枠」になった。長文や手書きの書き込みが入る大枠を確保。
+       セル全体の高さは従来と同じ（1+1+2＝4段ぶん）なのでA4横2段のグリッドは不変。
+       記入が2行目以降にある場合は大枠の中に行送りで描画する。
+       ※画面側（台帳UI）の行の増減は従来どおり。出力の書式のみの変更。
+
+  build v7.7 (場所より下を1つの枠に)  — v7.6 の「1段＋2段の大枠」からさらに統合し、場所行より下は
+       仕切りなしの3段ぶん（lineH×maxLines）の1マスに。記入行は枠の中に行送りで描画する。
+       セル高さは従来どおり（場所1＋3＝4段ぶん）でグリッドは不変。
+-->
+
+<!--
+  build v7.8 (役割「管理」を廃止)  — 現場・作図・管理の3役割から「管理」を削除し、現場・作図の2つに。
+       これまで管理者専用だった「最新版として公開」操作は、作図役割の画面に「⚑ 公開待ち」ボックスとして
+       仮登録ボックスと並べて表示し、同じ人が仮登録→公開の両方を行えるようにした（承認フローの2人体制
+       という前提は崩れるため、文言も「作図担当が仮登録しました」→「仮登録中です。内容を確認し、問題
+       なければ公開してください」に変更）。publishDraft() 自体は無改造。
+       .role-admin の CSS は他プロジェクトへ流用時の参考として残置（未使用）。
+-->
+
+<!--
+  build v7.9 (Googleドライブへの保存)  — 図面・ピン・朱書き・計測・撮影計画・台帳（写真含む）を1つの
+       JSONにまとめ、ユーザーの通常のDrive上に見えるフォルダ「図面共有システム_バックアップ」に手動保存
+       する機能。右パネルの「保存」タブに追加（オフラインキャッシュ設定の上）。
+       [認証] Google Identity Services（GIS, accounts.google.com/gsi/client を必要時ロード）でOAuthの
+       アクセストークンを取得。gapiクライアントは使わず fetch で Drive API v3 を直接叩く（単一HTML
+       ファイルを軽量に保つ方針を踏襲）。scope は drive.file（アプリが作成したファイルのみアクセス可）＋
+       openid email profile（接続アカウント表示のためだけ）。
+       [クライアントID] ユーザーごとに Google Cloud Console で発行が必要なため、初回のみ設定モーダルで
+       入力を求め localStorage に保持（このファイルは GitHub Pages 上で動くので localStorage は正常に
+       永続化される。file:// 直開きだと保持されない点は運用上の注意）。
+       [保存本体] フォルダ／ファイルをDrive上で検索→無ければ作成→multipart/related で作成/更新
+       （PATCH）。フォルダID・ファイルIDは見つかった/作った時点でlocalStorageにキャッシュし、次回以降の
+       検索を省略。
+       [対象データ] drawings, pins, strokes（朱書き/図形/計測）, ledgerPhotoMeta, ledgerPinMeta,
+       ledgerPlan, dwgSeq, slotSeq を1つのJSONに。写真はdataURLのまま含めるため、写真が多い図面は
+       ファイルサイズが大きくなる（読み込み側の実装は次段階で対応予定）。
+       [手動保存のみ] 自動保存は行わない（ご指定どおり）。保存ボタン押下時にトークンが無ければ同意
+       ポップアップが出る（アクセストークンは非永続・約55分でensureDriveToken内で再取得）。
 -->
 <html lang="ja">
 <head>
@@ -239,6 +354,8 @@
   .dock-btn svg{width:24px;height:24px;pointer-events:none}
   .dock-btn:active{transform:scale(.9)}
   .dock-btn.on{background:rgba(229,55,42,.18);color:#FF8A7F;box-shadow:inset 0 0 0 1.5px rgba(229,55,42,.45)}
+  /* ペン消しゴムがオンのとき（なぞって消すモード）を強調 */
+  .dock-btn.erase-on{background:rgba(229,55,42,.28);color:#FF8A7F;box-shadow:inset 0 0 0 2px var(--redpen)}
   .dock-btn.nav.on{background:rgba(34,196,138,.16);color:#7FE3C0;box-shadow:inset 0 0 0 1.5px rgba(34,196,138,.4)}
   .dock-btn:disabled{opacity:.3}
   .dock-btn.locked{opacity:.38}
@@ -332,6 +449,14 @@
   .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;
     padding-top:calc(16px + var(--safe-t));border-bottom:1px solid var(--line);flex-shrink:0}
   .drawer-head h2{font-size:16px;font-weight:600}
+  /* 図面リストのヘッダー右側（新規＋閉じる） */
+  .dh-actions{display:flex;align-items:center;gap:8px}
+  .new-dwg-btn{display:flex;align-items:center;gap:6px;height:44px;padding:0 13px;border-radius:11px;
+    background:var(--panel2);border:1px solid var(--line2);color:var(--text);font-size:13.5px;font-weight:600}
+  .new-dwg-btn svg{width:16px;height:16px;color:var(--signal)}
+  .new-dwg-btn:active{background:var(--panel3);transform:scale(.96)}
+  .dwg .imported-chip{font-family:var(--mono);font-size:10.5px;color:var(--muted2);
+    border:1px solid var(--line2);border-radius:5px;padding:1px 5px}
   .close-x{width:44px;height:44px;border-radius:11px;background:var(--panel2);display:grid;place-items:center;color:var(--muted)}
   .close-x:active{background:var(--panel3);transform:scale(.94)}
   .close-x svg{width:20px;height:20px}
@@ -366,6 +491,7 @@
   .ledger-btn .cnt{font-family:var(--mono);font-size:11px;color:var(--muted);
     background:var(--panel2);border-radius:5px;padding:1px 6px;min-width:20px;text-align:center}
   .ledger-btn .cnt.has{color:var(--signal)}
+  .ledger-btn .cnt.short{color:#F0685E;background:rgba(240,68,56,.14)} /* 未撮影あり */
 
   /* right drawer tabs */
   .ctx-tabs{display:flex;gap:4px;padding:10px 12px 0;flex-shrink:0}
@@ -645,6 +771,54 @@
     .cal-field-in{flex:1}
   }
 
+  
+
+/* ===== Googleドライブ保存 ===== */
+  .drive-box{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .drive-box .p-note{margin:0 0 12px}
+  .drive-acct{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+  .drive-email{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .drive-email.muted{color:var(--muted2);font-weight:500}
+  .link-btn{font-size:12px;color:var(--muted);text-decoration:underline;flex-shrink:0}
+  .link-btn:active{color:var(--text)}
+  .drive-last{font-size:11.5px;color:var(--muted2);font-family:var(--mono);margin-bottom:12px}
+  .drive-save-btn{width:100%;height:46px;border-radius:11px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px}
+  .drive-save-btn svg{width:17px;height:17px}
+  .drive-save-btn:active{transform:scale(.98)}
+  .drive-steps{margin:0 0 14px;padding-left:20px;font-size:12px;color:var(--muted);line-height:1.8}
+  .drive-steps b{color:var(--text)}
+  .drive-steps .mono{font-family:var(--mono);color:var(--signal);word-break:break-all}
+
+/* ===== 出力プレビュー ===== */
+  .lpv{position:fixed;inset:0;background:#0A0D12;z-index:115;display:none;flex-direction:column}
+  .lpv.show{display:flex}
+  .lpv-topbar{display:flex;align-items:center;gap:10px;padding:10px 14px;flex-shrink:0;
+    padding-top:calc(10px + var(--safe-t));
+    background:linear-gradient(180deg,#1A222D,#12181F);border-bottom:1px solid var(--line)}
+  .lpv-topbar h2{font-size:16px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lpv-topbar h2 .sub{font-size:12px;color:var(--muted);font-weight:500;margin-left:8px;font-family:var(--mono)}
+  .lpv-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:20px;
+    display:flex;flex-direction:column;align-items:center;gap:22px;touch-action:pan-y}
+  .lpv-loading{color:var(--muted2);font-size:13px;padding:60px 0}
+  .lpv-page{width:min(100%,1000px)}
+  .lpv-canvas{width:100%;height:auto;display:block;background:#fff;border-radius:2px;
+    box-shadow:0 16px 44px rgba(0,0,0,.55)}
+  .lpv-page-no{text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted2);margin-top:7px}
+  .ledger-out-preview{background:var(--panel3);color:var(--text);border:1px solid var(--line2)}
+
+  /* ===== 図面の取り込みダイアログ ===== */
+  .imp-preview{background:var(--panel2);border:1px solid var(--line);border-radius:10px;height:148px;
+    display:flex;align-items:center;justify-content:center;margin-bottom:14px;overflow:hidden}
+  .imp-preview img{max-width:100%;max-height:100%;object-fit:contain;background:#F4F1E8}
+  .imp-preview .ph{font-size:12.5px;color:var(--muted2);text-align:center;padding:0 12px;line-height:1.6}
+  /* §6の教訓：.btn-primary/.btn-cancel の width:100% が flex 行と衝突するので明示的に上書き */
+  .imp-actions{display:flex;gap:10px;margin-bottom:2px}
+  .imp-actions button{flex:1 1 0;width:auto;padding:14px 16px;border-radius:12px;font-size:14px;
+    font-weight:700;min-height:50px;transition:transform .08s}
+  .imp-actions button:active{transform:scale(.98)}
+  .imp-actions button[disabled]{opacity:.45;pointer-events:none}
+  .imp-meta{font-size:11.5px;color:var(--muted2);font-family:var(--mono);margin:-8px 0 12px;text-align:center}
+
   /* ===== clear-all confirm dialog ===== */
   .confirm-scrim{position:fixed;inset:0;background:rgba(6,9,13,.62);backdrop-filter:blur(3px);
     z-index:130;display:none;align-items:center;justify-content:center;padding:20px}
@@ -685,6 +859,46 @@
   .ledger-empty{text-align:center;color:var(--muted2);font-size:14px;padding:80px 20px;line-height:1.8}
   .ledger-empty svg{width:48px;height:48px;color:var(--line2);margin-bottom:16px}
 
+  /* 進捗（撮影済/計画・未撮影） */
+  .ledger-prog{font-size:12.5px;color:var(--muted);font-family:var(--mono);flex-shrink:0;white-space:nowrap}
+  .ledger-prog b{color:var(--text);font-size:14px}
+  .ledger-prog .lp-short{color:#F0685E;background:rgba(240,68,56,.14);border-radius:6px;padding:2px 7px;margin-left:6px;font-weight:700}
+  .ledger-prog .lp-done{color:var(--signal);background:rgba(59,130,246,.14);border-radius:6px;padding:2px 7px;margin-left:6px;font-weight:700}
+  @media(max-width:700px){ .ledger-prog{display:none} }
+
+  /* 撮影計画（枠）の操作行 */
+  .lsec-plan{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:11px 15px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.015)}
+  .lsec-plan-lbl{font-size:11.5px;color:var(--muted2);flex:1;min-width:150px}
+  .lsec-plan-btns{display:flex;flex-wrap:wrap;gap:7px}
+  .plan-btn{height:36px;padding:0 11px;border-radius:9px;background:var(--panel3);border:1px solid var(--line2);
+    color:var(--text);font-size:12.5px;font-weight:600;transition:.1s;white-space:nowrap}
+  .plan-btn:active{transform:scale(.95);background:var(--panel)}
+  .plan-btn.tmpl{background:rgba(59,130,246,.16);border-color:var(--signal);color:var(--signal)}
+  .lsec-cnt.short{color:#F0685E;font-weight:700}
+  .lphoto-none{grid-column:1/-1;font-size:12.5px;color:var(--muted2);padding:6px 2px;line-height:1.7}
+
+  /* 未撮影の枠 */
+  .lphoto.empty{border-style:dashed;border-color:var(--line2);background:transparent}
+  .lphoto-ph{width:100%;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+    background:repeating-linear-gradient(45deg,rgba(255,255,255,.02) 0 10px,transparent 10px 20px);color:var(--muted2)}
+  .lphoto-ph svg{width:34px;height:34px}
+  .lphoto-ph span{font-size:12.5px;font-weight:700;letter-spacing:.5px}
+  .lphoto-tag{position:absolute;left:8px;top:8px;font-family:var(--mono);font-size:10.5px;font-weight:700;
+    background:rgba(11,14,19,.7);border:1px solid var(--line2);color:var(--muted);border-radius:6px;padding:2px 7px}
+  .lphoto-tag.done{background:rgba(16,120,90,.85);border-color:transparent;color:#fff}
+  .slot-del{position:absolute;right:8px;top:8px;width:30px;height:30px;border-radius:8px;
+    background:rgba(11,14,19,.7);border:1px solid var(--line2);color:var(--muted);display:flex;align-items:center;justify-content:center}
+  .slot-del:active{background:var(--alert);color:#fff}
+  .slot-del svg{width:15px;height:15px;pointer-events:none}
+  .slot-shoot{display:flex;gap:7px}
+  .slot-cam{flex:1;height:40px;border-radius:9px;background:linear-gradient(180deg,var(--signal),var(--signal-dim));
+    color:var(--signal-ink);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:7px}
+  .slot-cam svg{width:16px;height:16px}
+  .slot-cam:active{transform:scale(.97)}
+  .slot-sample{height:40px;padding:0 12px;border-radius:9px;background:var(--panel3);border:1px solid var(--line2);
+    color:var(--muted);font-size:12.5px;font-weight:600}
+  .slot-sample:active{transform:scale(.95)}
+
   /* ピンごとのセクション */
   .lsec{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin-bottom:16px;overflow:hidden}
   .lsec-head{display:flex;align-items:center;gap:10px;padding:13px 15px;background:var(--panel2);border-bottom:1px solid var(--line)}
@@ -712,6 +926,13 @@
   .lphoto-anno.has{background:var(--signal);color:var(--signal-ink);border-color:var(--signal)}
   .lphoto-body{padding:11px 12px;display:flex;flex-direction:column;gap:9px}
   .lphoto-date{font-family:var(--mono);font-size:11px;color:var(--muted2)}
+  /* 場所（写真ごと） */
+  .lphoto-place{display:flex;align-items:center;gap:8px}
+  .lphoto-place label{font-size:11.5px;color:var(--muted);font-weight:700;flex:0 0 auto}
+  .lphoto-place input{flex:1;min-width:0;background:var(--panel3);border:1px solid var(--line2);border-radius:7px;
+    padding:8px 10px;color:var(--text);font-size:15px}
+  .lphoto-place input:focus{outline:none;border-color:var(--signal)}
+  .lphoto-place input::placeholder{color:var(--muted2)}
   /* 施工状況（前/中/後） */
   .lphoto-status{display:flex;gap:6px}
   .lphoto-status button{flex:1;padding:7px 4px;border-radius:7px;font-size:12px;font-weight:600;
@@ -774,6 +995,8 @@
     justify-content:center;flex-wrap:wrap;background:#12181F;border-top:1px solid var(--line)}
   .panno-shapes{display:none}.panno-shapes.show{display:flex}
   .panno-style{display:none}.panno-style.show{display:flex}
+  /* 消去モード中：スタイル行は高さを保ったまま薄く無効化（レイアウトを動かさないため） */
+  .panno-style.dimmed{opacity:.3;pointer-events:none}
   .ps-shape{width:42px;height:42px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);
     display:flex;align-items:center;justify-content:center;color:var(--text)}
   .ps-shape svg{width:20px;height:20px}
@@ -785,19 +1008,6 @@
     display:flex;align-items:center;justify-content:center;color:var(--text)}
   .ps-width button.on{border-color:var(--signal);background:var(--panel3)}
   .ps-width .dotw{background:currentColor;border-radius:50%}
-
-  /* ===== photo annotation editor (写真注釈) ===== */
-  .panno{position:fixed;inset:0;background:#0B0E13;z-index:145;display:none;flex-direction:column}
-  .panno.show{display:flex}
-  .panno-top{display:flex;align-items:center;gap:10px;padding:10px 14px;flex-shrink:0;
-    padding-top:calc(10px + var(--safe-t));
-    background:linear-gradient(180deg,#1A222D,#12181F);border-bottom:1px solid var(--line)}
-  .panno-top h3{font-size:15px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .panno-x{width:44px;height:44px;border-radius:11px;background:var(--panel2);border:1px solid var(--line);
-    display:flex;align-items:center;justify-content:center;flex-shrink:0}
-  .panno-x svg{width:20px;height:20px}
-  .panno-done{height:44px;padding:0 18px;border-radius:11px;font-size:14px;font-weight:700;
-    background:linear-gradient(180deg,var(--signal),var(--signal-dim));color:var(--signal-ink)}
 
   /* ===== build tag ===== */
   .build-tag{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink2);
@@ -818,7 +1028,6 @@
   <div class="role-seg" id="roleSeg">
     <button class="role-field active" data-role="field"><span class="d"></span><span class="txt">現場</span></button>
     <button class="role-drafter" data-role="drafter"><span class="d"></span><span class="txt">作図</span></button>
-    <button class="role-admin" data-role="admin"><span class="d"></span><span class="txt">管理</span></button>
   </div>
   <button class="icon-btn net-btn online" id="netBtn">
     <svg id="netIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0114 0M8.5 16.1a6 6 0 017 0M12 20h.01M2 8.82a15 15 0 0120 0"/></svg>
@@ -834,7 +1043,7 @@
   <span id="statusPill"></span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v6.7 · 消しゴム修正</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.9 · Googleドライブ保存</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -989,8 +1198,15 @@
 <div class="drawer left" id="drawerSheets">
   <div class="drawer-head">
     <h2>図面リスト</h2>
-    <button class="close-x" data-close="drawerSheets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    <div class="dh-actions">
+      <button class="new-dwg-btn" id="btnNewDwg" title="図面ファイルを取り込む">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新規
+      </button>
+      <button class="close-x" data-close="drawerSheets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
   </div>
+  <input type="file" id="dwgImportInput" accept="application/pdf,image/*,.svg,.pdf,.png,.jpg,.jpeg" style="display:none">
   <div class="drawer-body" id="dwgList"></div>
 </div>
 
@@ -1070,6 +1286,7 @@
   <button class="pin-del" id="pinDelete">このピンを削除</button>
 </div>
 <input type="file" id="photoInput" accept="image/*" multiple hidden>
+<input type="file" id="slotPhotoInput" accept="image/*" hidden>
 
 <!-- photo lightbox -->
 <div class="lightbox" id="lightbox"><button class="lb-close" id="lbClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg></button><img id="lbImg" alt="現場写真"></div>
@@ -1112,6 +1329,83 @@
   </div>
 </div>
 
+<!-- Googleドライブ連携の設定 -->
+<div class="cal-scrim" id="driveSetupScrim">
+  <div class="cal-box">
+    <div class="cal-head">
+      <h3>Googleドライブ連携の設定</h3>
+      <button class="close-x" id="driveSetupClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <p class="cal-desc">初回のみ、Google Cloud Console で発行した「OAuthクライアントID」が必要です（無料）。</p>
+    <ol class="drive-steps">
+      <li>Google Cloud Console でプロジェクトを作成</li>
+      <li>「APIとサービス」→ ライブラリ で <b>Google Drive API</b> を有効化</li>
+      <li>「OAuth同意画面」を設定（テストユーザーに自分のGoogleアカウントを追加）</li>
+      <li>「認証情報」→「OAuthクライアントID」を作成。種類は<b>ウェブアプリケーション</b></li>
+      <li>「承認済みのJavaScript生成元」に、このアプリを開いているURL（例：<span class="mono">https://xxxx.github.io</span>）を追加</li>
+      <li>発行された <span class="mono">〜.apps.googleusercontent.com</span> を下に貼り付け</li>
+    </ol>
+    <div class="cal-fields">
+      <div class="cal-field">
+        <label class="cal-lbl" for="driveClientIdInput">クライアントID</label>
+        <div class="cal-field-in"><input type="text" id="driveClientIdInput" class="cal-input" style="text-align:left;font-family:var(--mono);font-size:12.5px" autocomplete="off" placeholder="xxxx.apps.googleusercontent.com"></div>
+      </div>
+    </div>
+    <div class="cal-actions imp-actions">
+      <button class="btn-cancel" id="driveSetupCancel">キャンセル</button>
+      <button class="btn-primary" id="driveSetupSave">保存して連携</button>
+    </div>
+  </div>
+</div>
+
+<!-- 出力プレビュー（PDFと同じページ組み） -->
+<div class="lpv" id="lpv">
+  <div class="lpv-topbar">
+    <h2>出力プレビュー<span class="sub" id="lpvSub"></span></h2>
+    <button class="ledger-out-btn ledger-out-pdf" id="lpvPdf">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+      <span>このままPDF出力</span>
+    </button>
+    <button class="ledger-close" id="lpvClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="lpv-body" id="lpvBody"></div>
+</div>
+
+<!-- 図面の取り込みダイアログ -->
+<div class="cal-scrim" id="impScrim">
+  <div class="cal-box">
+    <div class="cal-head">
+      <h3>図面を取り込む</h3>
+      <button class="close-x" id="impClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <p class="cal-desc" id="impDesc">読み込んだ図面を v1.0（最新）として追加します。</p>
+    <div class="imp-preview" id="impPreview"><span class="ph">読み込み中…</span></div>
+    <div class="imp-meta" id="impMeta"></div>
+    <div class="cal-fields">
+      <div class="cal-field">
+        <label class="cal-lbl" for="impName">図面名</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><input type="text" id="impName" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off"></div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="impGroup">分類</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><select id="impGroup" class="cal-unit" style="flex:1;height:40px"></select></div>
+      </div>
+      <div class="cal-field" id="impGroupNewRow" style="display:none">
+        <label class="cal-lbl" for="impGroupNew">新しい分類名</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><input type="text" id="impGroupNew" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off" placeholder="例：屋上"></div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="impFloor">階数</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><input type="text" id="impFloor" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off" placeholder="例：3F"></div>
+      </div>
+    </div>
+    <div class="cal-actions imp-actions">
+      <button class="btn-cancel" id="impCancel">キャンセル</button>
+      <button class="btn-primary" id="impAdd" disabled>v1.0 として追加</button>
+    </div>
+  </div>
+</div>
+
 <!-- clear-all confirm dialog -->
 <div class="confirm-scrim" id="clearScrim">
   <div class="confirm-box">
@@ -1131,6 +1425,11 @@
 <div class="ledger" id="ledger">
   <div class="ledger-topbar">
     <h2 id="ledgerTitle">写真台帳<span class="sub" id="ledgerSub"></span></h2>
+    <div class="ledger-prog" id="ledgerProg"></div>
+    <button class="ledger-out-btn ledger-out-preview" id="ledgerPreview">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>プレビュー</span>
+    </button>
     <button class="ledger-out-btn ledger-out-pdf" id="ledgerPdf">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
       <span>PDF出力</span>
@@ -1350,14 +1649,68 @@ let pinSeq=2;
 /* ===== 写真台帳（ledger）データストア =====
    既存の pins[].photos（画像データURLの文字列配列）は一切変更しない。
    台帳で入力するメタ情報は、写真データURLをキーにした独立ストアに持つ（削除時もズレない）。 */
-let ledgerPhotoMeta={};  // src(dataURL) → {status, lines:[...], regDate}
+let ledgerPhotoMeta={};  // src(dataURL) → {status, place, lines:[...], regDate}
 let ledgerPinMeta={};    // 図面ID → ピンID → {trade, location, photographer}
+/* 撮影計画（枠）。写真を撮る前に「施工前の枠」等を用意しておき、撮影で埋める＝撮り忘れ防止。
+   既存の pins[].photos / ledgerPhotoMeta には手を入れず、独立ストアで持つ（§4のデータ方針）。
+   枠が写真に紐づく（src が入る）と、記述・施工状況の編集は従来どおり ledgerPhotoMeta 側に移る。 */
+let ledgerPlan={};       // 図面ID → ピンID → [{id, src:null|dataURL, meta:{status,place,lines,regDate}}]
+let slotSeq=0;
+function planArr(dwgId,pinId){
+  ledgerPlan[dwgId]=ledgerPlan[dwgId]||{};
+  return (ledgerPlan[dwgId][pinId]=ledgerPlan[dwgId][pinId]||[]);
+}
+function newSlot(status){ return {id:'k'+(++slotSeq), src:null, meta:{status:status||'', place:'', lines:[''], regDate:''}}; }
+function findSlot(sid){
+  const byPin=ledgerPlan[ledgerDwgId]||{};
+  for(const pid in byPin){ const s=byPin[pid].find(x=>x.id===sid); if(s) return s; }
+  return null;
+}
+// 枠に紐づいていない写真（枠を作らずに直接追加された従来どおりの写真）
+function unplannedPhotos(dwgId,p){
+  const used=new Set(planArr(dwgId,p.id).filter(s=>s.src).map(s=>s.src));
+  return p.photos.filter(src=>!used.has(src));
+}
+// 図面単位の進捗（撮影済 / 計画）。枠のない写真も「計画1・撮影済1」として数える。
+function ledgerProgress(dwgId){
+  let done=0,total=0;
+  (pins[dwgId]||[]).forEach(p=>{
+    const slots=planArr(dwgId,p.id);
+    total+=slots.length; done+=slots.filter(s=>s.src).length;
+    const extra=unplannedPhotos(dwgId,p).length;
+    total+=extra; done+=extra;
+  });
+  return {done,total,short:total-done};
+}
+// 写真を枠に割り当て（枠に書いておいた計画を写真メタへ引き継ぐ）
+function bindPhotoToSlot(dwgId,pinId,sid,src){
+  const s=(planArr(dwgId,pinId).find(x=>x.id===sid));
+  if(!s) return;
+  s.src=src;
+  const m=photoMeta(src);
+  if(s.meta.status) m.status=s.meta.status;
+  if(s.meta.place) m.place=s.meta.place;
+  if(s.meta.lines.some(l=>l.trim()!=='')) m.lines=s.meta.lines.slice();
+  m.regDate=todayStr();
+}
+// 写真が消えたら、その写真を持っていた枠を「未撮影」に戻す（記述は枠側へ退避して失わない）
+function detachSrcFromPlan(dwgId,src){
+  const byPin=ledgerPlan[dwgId]||{};
+  for(const pid in byPin) byPin[pid].forEach(s=>{
+    if(s.src===src){
+      const m=ledgerPhotoMeta[src];
+      if(m) s.meta={status:m.status||'',place:m.place||'',lines:(m.lines||['']).slice(),regDate:''};
+      s.src=null;
+    }
+  });
+}
 // 写真のメタを取得（無ければ初期化して返す）。登録日は初回アクセス時に今日で確定。
 // status は施工状況（''|before|during|after）、lines は写真下の自由記述（複数行）。
 function photoMeta(src){
-  if(!ledgerPhotoMeta[src]) ledgerPhotoMeta[src]={status:'',lines:[''],regDate:todayStr()};
-  // 旧データ互換：status が無い場合は補完
+  if(!ledgerPhotoMeta[src]) ledgerPhotoMeta[src]={status:'',place:'',lines:[''],regDate:todayStr()};
+  // 旧データ互換：status / place が無い場合は補完
   if(ledgerPhotoMeta[src].status===undefined) ledgerPhotoMeta[src].status='';
+  if(ledgerPhotoMeta[src].place===undefined) ledgerPhotoMeta[src].place='';
   return ledgerPhotoMeta[src];
 }
 function pinLedgerMeta(dwgId,pinId){
@@ -1379,7 +1732,11 @@ const inkKey=()=>state.selectedId+'@'+viewingVerObj().v;
 
 /* ===== view transform (pan/zoom) ===== */
 const vp=$('#viewport'), frame=$('#paperFrame');
-const CW=880, CH=620;
+/* 図面の座標系。内蔵図面は従来どおり 880×620。取り込み図面は縦横比が異なるので
+   図面ごとの sheetW/sheetH に切り替える（ピン・朱書き・計測はすべてこの単位系の上に乗る）。 */
+const BASE_CW=880, BASE_CH=620;
+let CW=BASE_CW, CH=BASE_CH;
+function applySheetSize(d){ CW=(d&&d.sheetW)||BASE_CW; CH=(d&&d.sheetH)||BASE_CH; }
 let view={scale:1,x:0,y:0};
 function applyView(){frame.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.scale})`;$('#zoomVal .zv-num').textContent=Math.round(view.scale*100)+'%';positionPins();}
 const PANEL_KEYS=['shape','style']; // stacking order when two panels share the same spot
@@ -1460,6 +1817,9 @@ const canvas=$('#inkLayer'), ctx=canvas.getContext('2d');
 const pointers=new Map();
 let curItem=null, gesture=null;
 let selectedItem=null, dragMode=null; // selection + move/resize of an already-placed shape
+// ペンモード時の「なぞり消しゴム」（free線のみ対象・図形は対象外）
+let penEraseMode=false;   // 消去モードのオン/オフ
+let penErasing=false;     // なぞり消去ドラッグ中
 const SELECTABLE_TYPES=['rect','ellipse','line','arrow','poly'];
 function shapeHandles(item){
   if(item.type==='rect'||item.type==='ellipse'){
@@ -1479,6 +1839,29 @@ function distToSegment(pt,x1,y1,x2,y2){
   const dx=x2-x1, dy=y2-y1, len2=dx*dx+dy*dy;
   let t=len2?((pt.x-x1)*dx+(pt.y-y1)*dy)/len2:0; t=Math.max(0,Math.min(1,t));
   return Math.hypot(pt.x-(x1+t*dx),pt.y-(y1+t*dy));
+}
+// 図面のペン消しゴム：点ptが触れた free 線（フリーハンド）を線全体単位で消す。
+// 図形（rect/ellipse/line/arrow/poly）と計測(measure)は対象外。写真注釈の pannoEraseAt と同じ考え方。
+function eraseInkAt(pt){
+  const arr=strokes[inkKey()]||[];
+  const tol=14/view.scale; // 画面px相当を図面座標に換算（ズームしても指の当たりは一定に感じる）
+  let changed=false;
+  for(let i=arr.length-1;i>=0;i--){
+    const it=arr[i];
+    if(it.type!=='free') continue; // ペン線のみ対象
+    const hitR=tol+(it.width||3)/2;
+    let hit=false;
+    if(it.pts.length===1){
+      hit=Math.hypot(pt.x-it.pts[0].x,pt.y-it.pts[0].y)<hitR;
+    } else {
+      for(let j=0;j<it.pts.length-1;j++){
+        if(distToSegment(pt,it.pts[j].x,it.pts[j].y,it.pts[j+1].x,it.pts[j+1].y)<hitR){ hit=true; break; }
+      }
+    }
+    if(hit){ arr.splice(i,1); changed=true; }
+  }
+  if(changed){ redoStrokes[inkKey()]=[]; redrawInk(); }
+  return changed;
 }
 function pointInShapeBody(item,pt){
   if(item.type==='rect'||item.type==='ellipse'){
@@ -1609,6 +1992,7 @@ vp.addEventListener('pointerdown',e=>{
     }
   } else if(pointers.size===1 && drawable && state.tool==='pen' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
+    if(penEraseMode){ penErasing=true; eraseInkAt(pt); return; } // なぞり消去（描画しない）
     const style={color:state.inkColor,width:state.inkWidth,dash:state.inkDash,fill:state.inkFill};
     curItem={type:'free', pts:[pt], ...style};
     (strokes[inkKey()]=strokes[inkKey()]||[]).push(curItem);
@@ -1634,6 +2018,8 @@ vp.addEventListener('pointermove',e=>{
   if(!pointers.has(e.pointerId))return;
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(pointers.size>=2){ updateGesture(); return; }
+  // ペン消しゴム：なぞっている間、触れた free 線を消す
+  if(penErasing){ eraseInkAt(toCanvas(e.clientX,e.clientY)); return; }
   if(dragMode){
     const pt=toCanvas(e.clientX,e.clientY), item=dragMode.item;
     if(dragMode.mode==='move'){
@@ -1702,6 +2088,7 @@ function endPointer(e){
   if(!pointers.has(e.pointerId))return;
   const wasLast=pointers.size===1;
   pointers.delete(e.pointerId);
+  if(penErasing){ penErasing=false; } // なぞり消去の終了
   if(dragMode){ dragMode=null; redrawInk(); }
   if(curItem){
     // discard a degenerate shape created by a mere tap with no drag (zero size, invisible)
@@ -1777,7 +2164,12 @@ function refreshInkBtns(){
   const has=(strokes[inkKey()]||[]).length>0;
   const hasRedo=(redoStrokes[inkKey()]||[]).length>0;
   $('#btnUndo').disabled=!has; $('#btnClear').disabled=!has; $('#btnRedo').disabled=!hasRedo;
-  $('#btnErase').disabled=!selectedItem;
+  // 消しゴム：ペンモードでは「なぞり消去」のトグルとして常に使える。
+  // 図形モードでは従来どおり「選択中の図形を削除」（選択時のみ有効）。
+  const canEdit=!editBlockReason();
+  $('#btnErase').disabled = (state.tool==='pen') ? !canEdit : !selectedItem;
+  $('#btnErase').classList.toggle('erase-on', state.tool==='pen' && penEraseMode);
+  $('#btnErase').title = (state.tool==='pen') ? 'ペン消しゴム（なぞってペン線を消す）' : '選択中の線・図形を削除';
 }
 // 1つの注釈アイテムを任意のcanvas contextに描く（図面・写真注釈で共用）。
 // polyのラバーバンド（描画中プレビュー）は draftInfo で受け取る。
@@ -1873,6 +2265,7 @@ function redrawInk(){
 function setTool(t){
   if(t!=='shape' && polyDraft) finishPoly();
   if(t!=='shape') deselectShape();
+  if(t!=='pen'){ penEraseMode=false; penErasing=false; } // ペン以外に移ったら消去モード解除
   polyPending=false;
   state.tool=t;
   $('#btnNav').classList.toggle('on',t==='nav');
@@ -2007,6 +2400,15 @@ $('#clearCancel').addEventListener('click',closeClearConfirm);
 $('#clearConfirm').addEventListener('click',()=>{ doClearAll(); closeClearConfirm(); });
 $('#clearScrim').addEventListener('click',e=>{ if(e.target.id==='clearScrim') closeClearConfirm(); });
 $('#btnErase').addEventListener('click',()=>{
+  // ペンモード：なぞり消去のトグル（free線のみ対象）
+  if(state.tool==='pen'){
+    const r=editBlockReason(); if(r){toast(r,'warn');return;}
+    penEraseMode=!penEraseMode;
+    refreshInkBtns();
+    toast(penEraseMode?'ペン消しゴム：なぞってペン線を消します（図形は消えません）':'ペン消しゴムを解除しました','ok');
+    return;
+  }
+  // 図形モード：選択中の図形を削除（従来動作）
   if(!selectedItem)return;
   const arr=strokes[inkKey()]||[];
   const idx=arr.indexOf(selectedItem);
@@ -2032,63 +2434,127 @@ function renderLedger(){
   const d=drawings.find(x=>x.id===ledgerDwgId);
   if(!d)return;
   $('#ledgerSub').textContent=d.name+' · '+d.floor;
+  const pr=ledgerProgress(ledgerDwgId);
+  const prEl=$('#ledgerProg');
+  prEl.innerHTML = pr.total
+    ? `撮影済 <b>${pr.done}</b> / 計画 <b>${pr.total}</b>${pr.short?` <span class="lp-short">未撮影 ${pr.short}</span>`:' <span class="lp-done">完了</span>'}`
+    : '';
   const pinsArr=pins[ledgerDwgId]||[];
-  // 写真が1枚でもあるピンのみ台帳に載せる
-  const withPhotos=pinsArr.filter(p=>p.photos.length>0);
   const body=$('#ledgerBody');
-  if(!withPhotos.length){
+  if(!pinsArr.length){
     body.innerHTML=`<div class="ledger-empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v14H4z"/><path d="M4 9h16"/><circle cx="8" cy="14" r="1.6"/><path d="M11 15l2-2 3 3"/></svg>
-      <div>この図面にはまだ写真がありません。<br>図面上にピンを立て、ピンを開いて写真を追加してください。</div>
+      <div>この図面にはまだピンがありません。<br>図面上にピンを立てると、ここで撮影の枠を用意できます。</div>
     </div>`;
     return;
   }
   let html='';
-  withPhotos.forEach((p,pi)=>{
+  pinsArr.forEach((p,pi)=>{
     const pc=p.color||DEFAULT_COLOR, ic=ICONS[p.icon]||ICONS[DEFAULT_ICON];
     const title=p.title||`ピン P${pi+1}`;
     const pm=pinLedgerMeta(ledgerDwgId,p.id);
-    // ピン共通メタ（工種・位置・撮影者）。位置は図面のfloorを初期プレースホルダに
+    const slots=planArr(ledgerDwgId,p.id);
+    const extra=unplannedPhotos(ledgerDwgId,p);
+    const done=slots.filter(s=>s.src).length+extra.length;
+    const total=slots.length+extra.length;
+    const shortN=total-done;
     html+=`<div class="lsec" data-pin="${p.id}">
       <div class="lsec-head">
         <span class="lsec-dot" style="background:${pc}"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">${ic}</svg></span>
-        <span class="lsec-title">${title}</span>
-        <span class="lsec-cnt">写真 ${p.photos.length} 枚</span>
+        <span class="lsec-title">${escHtml(title)}</span>
+        <span class="lsec-cnt ${shortN?'short':''}">${total?`${done} / ${total}`:'枠なし'}${shortN?`　未撮影 ${shortN}`:''}</span>
       </div>
       <div class="lsec-meta">
         <div class="lmeta-field"><label>工種</label><input type="text" data-pmeta="trade" data-pin="${p.id}" value="${escAttr(pm.trade)}" placeholder="例：電気設備"></div>
         <div class="lmeta-field"><label>位置（階・通り芯）</label><input type="text" data-pmeta="location" data-pin="${p.id}" value="${escAttr(pm.location)}" placeholder="例：${d.floor} X3-Y2"></div>
         <div class="lmeta-field"><label>撮影者</label><input type="text" data-pmeta="photographer" data-pin="${p.id}" value="${escAttr(pm.photographer)}" placeholder="氏名"></div>
       </div>
+      <div class="lsec-plan">
+        <span class="lsec-plan-lbl">撮影の枠を用意（先に作っておくと撮り忘れを防げます）</span>
+        <div class="lsec-plan-btns">
+          <button class="plan-btn tmpl" data-tmpl="${p.id}">施工前・中・後の3枠</button>
+          <button class="plan-btn" data-addslot="${p.id}" data-status="before">＋ 施工前</button>
+          <button class="plan-btn" data-addslot="${p.id}" data-status="during">＋ 施工中</button>
+          <button class="plan-btn" data-addslot="${p.id}" data-status="after">＋ 施工後</button>
+          <button class="plan-btn" data-addslot="${p.id}" data-status="">＋ 空の枠</button>
+        </div>
+      </div>
       <div class="lphotos">`;
-    p.photos.forEach((src,idx)=>{
-      const meta=photoMeta(src);
-      const linesHtml=meta.lines.map((ln,li)=>`
-        <div class="lphoto-line">
-          <input type="text" data-src="${escAttr(src)}" data-li="${li}" value="${escAttr(ln)}" placeholder="記入（使用部材・数量・施工内容など）">
-          <button class="lphoto-line-rm" data-src="${escAttr(src)}" data-li="${li}" title="この行を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
-        </div>`).join('');
-      html+=`<div class="lphoto">
-        <div class="lphoto-imgwrap">
-          <img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" alt="現場写真">
-          <button class="lphoto-anno ${hasPhotoInk(src)?'has':''}" data-src="${escAttr(src)}" title="写真に書き込み"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
-        </div>
-        <div class="lphoto-body">
-          <div class="lphoto-date">登録日：${meta.regDate}</div>
-          <div class="lphoto-status" data-src="${escAttr(src)}">
-            <button data-status="before" class="${meta.status==='before'?'on':''}">施工前</button>
-            <button data-status="during" class="${meta.status==='during'?'on':''}">施工中</button>
-            <button data-status="after" class="${meta.status==='after'?'on':''}">施工後</button>
-          </div>
-          <div class="lphoto-lines" data-src="${escAttr(src)}">${linesHtml}</div>
-          <button class="lphoto-add-line" data-src="${escAttr(src)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>行を追加</button>
-        </div>
-      </div>`;
-    });
+    slots.forEach((sl,si)=>{ html += sl.src ? photoCellHtml(sl.src, sl.id, si+1) : emptyCellHtml(sl, p.id, si+1); });
+    extra.forEach(src=>{ html += photoCellHtml(src, null, 0); });
+    if(!total) html+=`<div class="lphoto-none">枠も写真もありません。上のボタンで枠を用意するか、図面のピンから写真を追加してください。</div>`;
     html+=`</div></div>`;
   });
   body.innerHTML=html;
   bindLedger();
+}
+
+// 撮影済みのセル（従来の写真セル。枠から撮った場合は「枠 n」チップを付ける）
+function photoCellHtml(src, slotId, no){
+  const meta=photoMeta(src);
+  const linesHtml=meta.lines.map((ln,li)=>`
+    <div class="lphoto-line">
+      <input type="text" data-src="${escAttr(src)}" data-li="${li}" value="${escAttr(ln)}" placeholder="記入（使用部材・数量・施工内容など）">
+      <button class="lphoto-line-rm" data-src="${escAttr(src)}" data-li="${li}" title="この行を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+    </div>`).join('');
+  return `<div class="lphoto">
+    <div class="lphoto-imgwrap">
+      <img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" alt="現場写真">
+      ${slotId?`<span class="lphoto-tag done">枠 ${no}・撮影済</span>`:''}
+      <button class="lphoto-anno ${hasPhotoInk(src)?'has':''}" data-src="${escAttr(src)}" title="写真に書き込み"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
+    </div>
+    <div class="lphoto-body">
+      <div class="lphoto-date">登録日：${meta.regDate}</div>
+      <div class="lphoto-place">
+        <label>場所</label>
+        <input type="text" data-field="place" data-src="${escAttr(src)}" value="${escAttr(meta.place)}" placeholder="例：3F 会議室A 天井裏">
+      </div>
+      <div class="lphoto-status" data-src="${escAttr(src)}">
+        <button data-status="before" class="${meta.status==='before'?'on':''}">施工前</button>
+        <button data-status="during" class="${meta.status==='during'?'on':''}">施工中</button>
+        <button data-status="after" class="${meta.status==='after'?'on':''}">施工後</button>
+      </div>
+      <div class="lphoto-lines" data-src="${escAttr(src)}">${linesHtml}</div>
+      <button class="lphoto-add-line" data-src="${escAttr(src)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>行を追加</button>
+    </div>
+  </div>`;
+}
+
+// 未撮影の枠（点線）。施工状況・記述は先に書いておける（撮影時に写真へ引き継がれる）
+function emptyCellHtml(sl, pinId, no){
+  const meta=sl.meta;
+  const linesHtml=meta.lines.map((ln,li)=>`
+    <div class="lphoto-line">
+      <input type="text" data-slot="${sl.id}" data-li="${li}" value="${escAttr(ln)}" placeholder="記入（予定の施工内容など）">
+      <button class="lphoto-line-rm" data-slot="${sl.id}" data-li="${li}" title="この行を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+    </div>`).join('');
+  return `<div class="lphoto empty">
+    <div class="lphoto-imgwrap">
+      <div class="lphoto-ph">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <span>未撮影</span>
+      </div>
+      <span class="lphoto-tag">枠 ${no}</span>
+      <button class="slot-del" data-delslot="${sl.id}" data-pin="${pinId}" title="この枠を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="lphoto-body">
+      <div class="slot-shoot">
+        <button class="slot-cam" data-shoot="${sl.id}" data-pin="${pinId}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>この枠を撮影</button>
+        <button class="slot-sample" data-sample="${sl.id}" data-pin="${pinId}">サンプル</button>
+      </div>
+      <div class="lphoto-place">
+        <label>場所</label>
+        <input type="text" data-field="place" data-slot="${sl.id}" value="${escAttr(meta.place)}" placeholder="例：3F 会議室A 天井裏">
+      </div>
+      <div class="lphoto-status" data-slot="${sl.id}">
+        <button data-status="before" class="${meta.status==='before'?'on':''}">施工前</button>
+        <button data-status="during" class="${meta.status==='during'?'on':''}">施工中</button>
+        <button data-status="after" class="${meta.status==='after'?'on':''}">施工後</button>
+      </div>
+      <div class="lphoto-lines" data-slot="${sl.id}">${linesHtml}</div>
+      <button class="lphoto-add-line" data-slot="${sl.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>行を追加</button>
+    </div>
+  </div>`;
 }
 
 /* ===== 写真＋注釈の合成（サムネイル・拡大表示用）=====
@@ -2168,21 +2634,25 @@ function bindLedger(){
   }));
   // 施工状況ボタン（前/中/後、再タップで解除）
   body.querySelectorAll('.lphoto-status').forEach(row=>{
-    const src=row.dataset.src;
     row.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-      const meta=photoMeta(src);
+      const meta=metaOf(row); if(!meta) return;
       meta.status = (meta.status===b.dataset.status) ? '' : b.dataset.status;
       row.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x.dataset.status===meta.status));
     }));
   });
+  // 場所（写真ごと。ピン共通の「位置」より細かい場所を写真単位で残せる）
+  body.querySelectorAll('input[data-field="place"]').forEach(inp=>inp.addEventListener('input',()=>{
+    const meta=metaOf(inp); if(!meta) return;
+    meta.place=inp.value;
+  }));
   // 写真下の自由記述：各行の入力
   body.querySelectorAll('.lphoto-line input').forEach(inp=>inp.addEventListener('input',()=>{
-    const meta=photoMeta(inp.dataset.src);
+    const meta=metaOf(inp); if(!meta) return;
     meta.lines[+inp.dataset.li]=inp.value;
   }));
   // 行の削除（最後の1行は残す：空にして消えると追加導線が分かりにくいため）
   body.querySelectorAll('.lphoto-line-rm').forEach(btn=>btn.addEventListener('click',()=>{
-    const meta=photoMeta(btn.dataset.src);
+    const meta=metaOf(btn); if(!meta) return;
     const li=+btn.dataset.li;
     if(meta.lines.length<=1){ meta.lines[0]=''; }
     else { meta.lines.splice(li,1); }
@@ -2190,16 +2660,79 @@ function bindLedger(){
   }));
   // 行の追加
   body.querySelectorAll('.lphoto-add-line').forEach(btn=>btn.addEventListener('click',()=>{
-    photoMeta(btn.dataset.src).lines.push('');
+    const meta=metaOf(btn); if(!meta) return;
+    meta.lines.push('');
     renderLedger();
   }));
+  // ---- 撮影計画（枠）----
+  // テンプレート：施工前・中・後の3枠
+  body.querySelectorAll('[data-tmpl]').forEach(btn=>btn.addEventListener('click',()=>{
+    const arr=planArr(ledgerDwgId,btn.dataset.tmpl);
+    ['before','during','after'].forEach(st=>arr.push(newSlot(st)));
+    afterPlanChange('施工前・施工中・施工後の枠を用意しました');
+  }));
+  // 枠を1つ追加
+  body.querySelectorAll('[data-addslot]').forEach(btn=>btn.addEventListener('click',()=>{
+    planArr(ledgerDwgId,btn.dataset.addslot).push(newSlot(btn.dataset.status));
+    afterPlanChange('枠を追加しました');
+  }));
+  // 枠を削除
+  body.querySelectorAll('[data-delslot]').forEach(btn=>btn.addEventListener('click',()=>{
+    const pid=btn.dataset.pin, arr=planArr(ledgerDwgId,pid);
+    const i=arr.findIndex(x=>x.id===btn.dataset.delslot);
+    if(i>=0) arr.splice(i,1);
+    afterPlanChange('枠を削除しました');
+  }));
+  // 枠を撮影（カメラ／ライブラリ）
+  body.querySelectorAll('[data-shoot]').forEach(btn=>btn.addEventListener('click',()=>{
+    slotTarget={pin:btn.dataset.pin, slot:btn.dataset.shoot};
+    $('#slotPhotoInput').click();
+  }));
+  // 枠にサンプル写真（試用・デモ用）
+  body.querySelectorAll('[data-sample]').forEach(btn=>btn.addEventListener('click',()=>{
+    const p=(pins[ledgerDwgId]||[]).find(x=>x.id===btn.dataset.pin); if(!p) return;
+    const src=samplePhoto(p.photos.length+1);
+    p.photos.push(src);
+    bindPhotoToSlot(ledgerDwgId,p.id,btn.dataset.sample,src);
+    afterPlanChange('枠に写真を登録しました');
+  }));
+}
+// data-src なら写真のメタ、data-slot なら枠（未撮影）のメタを返す
+function metaOf(el){
+  if(el.dataset.src) return photoMeta(el.dataset.src);
+  const sl=findSlot(el.dataset.slot);
+  return sl?sl.meta:null;
+}
+let slotTarget=null; // {pin, slot} 撮影ボタンで開いたファイル選択の対象枠
+function afterPlanChange(msg){
+  renderLedger(); renderPins(); renderContext(); renderList();
+  if(msg) toast(msg,'ok');
 }
 // HTML/属性エスケープ（ユーザー入力・dataURLの安全表示）
 function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function escAttr(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+// 枠を指定しての撮影：読み込んだ写真をピンに追加し、その枠に紐づける
+$('#slotPhotoInput').addEventListener('change',e=>{
+  const f=e.target.files&&e.target.files[0]; e.target.value='';
+  if(!f||!slotTarget) return;
+  const t=slotTarget; slotTarget=null;
+  const p=(pins[ledgerDwgId]||[]).find(x=>x.id===t.pin); if(!p) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    p.photos.push(r.result);
+    bindPhotoToSlot(ledgerDwgId,p.id,t.slot,r.result);
+    afterPlanChange('枠に写真を登録しました');
+  };
+  r.onerror=()=>toast('写真を読み込めませんでした','warn');
+  r.readAsDataURL(f);
+});
+
 $('#ledgerClose').addEventListener('click',closeLedger);
 $('#ledgerPdf').addEventListener('click',()=>exportLedgerPDF());
+$('#ledgerPreview').addEventListener('click',()=>openLedgerPreview());
+$('#lpvClose').addEventListener('click',closeLedgerPreview);
+$('#lpvPdf').addEventListener('click',()=>exportLedgerPDF());
 $('#ledgerXlsx').addEventListener('click',()=>toast('Excel出力は次のステップで実装予定です','warn'));
 
 /* ===== PDF出力 =====
@@ -2220,19 +2753,23 @@ function loadJsPDF(){
 }
 
 // 台帳のデータを「セル（写真1枚＝1セル）」の配列に平坦化。ピンをまたいで通しで並べる。
+// 未撮影の枠も src:null のセルとして出す（PDFに「未撮影」と印刷して撮り忘れを可視化）。
 function ledgerCells(){
-  const pinsArr=(pins[ledgerDwgId]||[]).filter(p=>p.photos.length>0);
   const cells=[];
-  pinsArr.forEach((p,pi)=>{
+  (pins[ledgerDwgId]||[]).forEach((p,pi)=>{
     const pm=pinLedgerMeta(ledgerDwgId,p.id);
-    p.photos.forEach(src=>{
-      const meta=photoMeta(src);
-      cells.push({
-        src, title:p.title||`ピン P${pi+1}`,
-        trade:pm.trade, location:pm.location, photographer:pm.photographer,
-        regDate:meta.regDate, status:meta.status,
-        lines:meta.lines.filter(l=>l.trim()!=='')
-      });
+    const base=(meta)=>({
+      title:p.title||`ピン P${pi+1}`,
+      trade:pm.trade, location:pm.location, photographer:pm.photographer,
+      regDate:meta.regDate, status:meta.status, place:meta.place||'',
+      lines:(meta.lines||[]).filter(l=>l.trim()!=='')
+    });
+    planArr(ledgerDwgId,p.id).forEach(sl=>{
+      const meta=sl.src?photoMeta(sl.src):sl.meta;
+      cells.push(Object.assign(base(meta),{src:sl.src,planned:true}));
+    });
+    unplannedPhotos(ledgerDwgId,p).forEach(src=>{
+      cells.push(Object.assign(base(photoMeta(src)),{src,planned:false}));
     });
   });
   return cells;
@@ -2242,6 +2779,20 @@ function ledgerCells(){
 function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
   const STATUS_TEXT={before:'施工前',during:'施工中',after:'施工後'};
   ctx.strokeStyle='#333';ctx.lineWidth=1.2;
+  // 未撮影の枠：点線＋「未撮影」。施工状況・記述は書いてあれば出す。
+  if(!cell.src){
+    ctx.save();
+    ctx.setLineDash([5,4]); ctx.strokeStyle='#999'; ctx.lineWidth=1.2;
+    ctx.strokeRect(x,y,w,photoH);
+    ctx.setLineDash([]);
+    ctx.fillStyle='#B00020'; ctx.font='bold 15px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('未撮影', x+w/2, y+photoH/2);
+    ctx.restore();
+    drawCellStatus(ctx,cell,x,y,STATUS_TEXT);
+    drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad);
+    return Promise.resolve();
+  }
   return new Promise(resolve=>{
     const img=new Image();
     img.onload=()=>{
@@ -2272,36 +2823,309 @@ function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
       }
       ctx.strokeStyle='#333';ctx.lineWidth=1.2;
       ctx.strokeRect(x,y,w,photoH);
-      // 施工状況バッジ（写真の左上）
-      if(cell.status && STATUS_TEXT[cell.status]){
-        const label=STATUS_TEXT[cell.status];
-        ctx.font='bold 12px sans-serif';
-        const tw=ctx.measureText(label).width;
-        const bw=tw+14, bh=22, bx=x+6, by=y+6;
-        ctx.fillStyle='rgba(16,120,90,.92)';
-        ctx.fillRect(bx,by,bw,bh);
-        ctx.fillStyle='#fff';ctx.textBaseline='middle';
-        ctx.fillText(label, bx+7, by+bh/2+1);
-      }
-      // テキスト行（各行を枠で区切る）
-      ctx.fillStyle='#111';ctx.font='13px sans-serif';ctx.textBaseline='middle';
-      let ty=y+photoH;
-      cell.lines.forEach(ln=>{
-        ctx.strokeRect(x,ty,w,lineH);
-        ctx.fillText(ln, x+pad, ty+lineH/2, w-pad*2);
-        ty+=lineH;
-      });
+      drawCellStatus(ctx,cell,x,y,STATUS_TEXT);
+      drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad);
       resolve();
     };
     img.onerror=()=>{ ctx.strokeRect(x,y,w,photoH); resolve(); };
     img.src=cell.src;
   });
 }
+// 施工状況バッジ（セル左上）
+function drawCellStatus(ctx,cell,x,y,STATUS_TEXT){
+  if(!(cell.status && STATUS_TEXT[cell.status])) return;
+  const label=STATUS_TEXT[cell.status];
+  ctx.save();
+  ctx.textAlign='left';
+  ctx.font='bold 12px sans-serif';
+  const tw=ctx.measureText(label).width;
+  const bw=tw+14, bh=22, bx=x+6, by=y+6;
+  ctx.fillStyle=cell.src?'rgba(16,120,90,.92)':'rgba(120,120,120,.92)'; // 未撮影は灰色
+  ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#fff';ctx.textBaseline='middle';
+  ctx.fillText(label, bx+7, by+bh/2+1);
+  ctx.restore();
+}
+// 写真下の「場所」行＋記述行。台帳の書式として、記入が無くても枠（罫線）は常に出す。
+// 印刷して手書きで埋められるようにするため、記述欄は常に3段（LPAGE.maxLines）。
+function drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad){
+  ctx.save();
+  ctx.textAlign='left';
+  ctx.strokeStyle='#333';ctx.lineWidth=1.2;
+  ctx.textBaseline='middle';
+  let ty=y+photoH;
+  // 場所（常に1行。ラベルは灰色で区別し、未記入なら空欄のまま）
+  ctx.strokeRect(x,ty,w,lineH);
+  ctx.fillStyle='#666';ctx.font='bold 11px sans-serif';
+  const lw=ctx.measureText('場所').width;
+  ctx.fillText('場所', x+pad, ty+lineH/2);
+  if(cell.place && cell.place.trim()!==''){
+    ctx.fillStyle='#111';ctx.font='13px sans-serif';
+    ctx.fillText(cell.place, x+pad+lw+8, ty+lineH/2, w-pad*2-lw-8);
+  }
+  ty+=lineH;
+  // 記述欄：場所より下は仕切らず、3段ぶんの高さの1マスにまとめる（長文・手書き用）。
+  // 記入が無くても枠は常に出す。高さの合計は従来と同じ（場所1＋3＝4段ぶん）。
+  const bigH=lineH*LPAGE.maxLines; // 3段ぶん
+  ctx.strokeStyle='#333';
+  ctx.strokeRect(x,ty,w,bigH);
+  ctx.fillStyle='#111';ctx.font='13px sans-serif';
+  cell.lines.forEach((ln,i)=>{ ctx.fillText(ln, x+pad, ty+lineH*(i+0.5), w-pad*2); });
+  ctx.restore();
+}
+
+/* ページ組みは プレビュー と PDF出力 で完全に共通。
+   ここを1か所にしておかないと「プレビューと出力が違う」という一番まずいズレが起きる。 */
+const LPAGE={ COLS:3, ROWS:2, pageW:1123, pageH:794, margin:28, gapX:14, gapY:14,
+              lineH:26, maxLines:3, pad:8, gridTop:44 };
+function lpageGeom(){
+  const g=LPAGE;
+  const cellW=(g.pageW-g.margin*2-g.gapX*(g.COLS-1))/g.COLS;
+  const photoH=cellW*0.72;
+  const cellH=photoH+g.lineH*(g.maxLines+1); // +1 は「場所」の行ぶん
+  return {cellW,photoH,cellH,perPage:g.COLS*g.ROWS};
+}
+// 1ページ分をCanvasに描いて返す（SC＝実寸に対する解像度倍率）
+async function renderLedgerPage(cells,pg,pageCount,d,SC){
+  const g=LPAGE, {cellW,photoH,cellH,perPage}=lpageGeom();
+  const cv=document.createElement('canvas');
+  cv.width=Math.round(g.pageW*SC); cv.height=Math.round(g.pageH*SC);
+  const ctx=cv.getContext('2d');
+  ctx.scale(SC,SC);
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,g.pageW,g.pageH);
+  // ヘッダ（図面名・ページ）
+  ctx.fillStyle='#111';ctx.font='bold 18px sans-serif';ctx.textBaseline='alphabetic';ctx.textAlign='left';
+  ctx.fillText(`写真台帳　${d.name}（${d.floor}）`, g.margin, 24);
+  ctx.font='12px sans-serif';ctx.fillStyle='#666';
+  ctx.fillText(`${pg+1} / ${pageCount}`, g.pageW-g.margin-40, 24);
+  ctx.strokeStyle='#111';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(g.margin,32);ctx.lineTo(g.pageW-g.margin,32);ctx.stroke();
+  const pageCells=cells.slice(pg*perPage,(pg+1)*perPage);
+  for(let i=0;i<pageCells.length;i++){
+    const col=i%g.COLS, row=Math.floor(i/g.COLS);
+    const x=g.margin+col*(cellW+g.gapX);
+    const y=g.gridTop+row*(cellH+g.gapY);
+    await drawCell(ctx,pageCells[i],x,y,cellW,photoH,g.lineH,g.pad);
+  }
+  return cv;
+}
+
+/* ===== Googleドライブへの保存 =====
+   Google Identity Services（GIS）でOAuthのアクセストークンを取得し、Drive API v3 を fetch で直接叩く
+   （gapiクライアントは使わず軽量に保つ＝単一HTMLファイルの方針を踏襲）。
+   scope は drive.file（アプリが作成したファイルのみアクセス可＝安全側）＋ openid email profile（表示用に
+   接続アカウントのメールを取得するだけ）。保存先はユーザーの通常のDrive上に見えるフォルダ（指定どおり）。
+   クライアントIDは利用者ごとに Google Cloud Console で発行してもらう必要があるため、localStorage に
+   保持して初回のみ入力を求める。 */
+const DRIVE_FOLDER_NAME='図面共有システム_バックアップ';
+const DRIVE_FILE_NAME='zumen-backup.json';
+const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file openid email profile';
+const DRIVE_API='https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD_API='https://www.googleapis.com/upload/drive/v3/files';
+
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
+function driveClientId(){ return lsGet('driveClientId')||''; }
+
+let gisClient=null, driveToken=null, driveTokenExp=0;
+let gisLoading=null;
+function loadGIS(){
+  if(window.google && window.google.accounts && window.google.accounts.oauth2) return Promise.resolve();
+  if(gisLoading) return gisLoading;
+  gisLoading=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://accounts.google.com/gsi/client';
+    s.onload=()=>res(); s.onerror=()=>{ gisLoading=null; rej(new Error('GIS load failed')); };
+    document.head.appendChild(s);
+  });
+  return gisLoading;
+}
+// アクセストークンを確保（有効なら使い回し、無ければGoogleの同意ポップアップ）
+function ensureDriveToken(){
+  return new Promise(async (resolve,reject)=>{
+    if(driveToken && Date.now()<driveTokenExp-30000){ resolve(driveToken); return; }
+    const clientId=driveClientId();
+    if(!clientId){ reject(new Error('NO_CLIENT_ID')); return; }
+    try{ await loadGIS(); }catch(e){ reject(e); return; }
+    if(!gisClient){
+      gisClient=google.accounts.oauth2.initTokenClient({client_id:clientId, scope:DRIVE_SCOPE, callback:()=>{}});
+    }
+    gisClient.callback=async(resp)=>{
+      if(!resp || resp.error){ reject(new Error((resp&&resp.error)||'auth failed')); return; }
+      driveToken=resp.access_token;
+      driveTokenExp=Date.now()+((resp.expires_in||3300)*1000);
+      try{
+        const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:`Bearer ${driveToken}`}});
+        if(r.ok){ const info=await r.json(); if(info.email) lsSet('driveEmail',info.email); }
+      }catch(e){ /* 表示用の付随情報なので失敗しても保存自体は続行 */ }
+      resolve(driveToken);
+    };
+    gisClient.requestAccessToken({prompt:''});
+  });
+}
+async function driveFindFolder(token){
+  const q=encodeURIComponent(`name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const r=await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name)&spaces=drive`,{headers:{Authorization:`Bearer ${token}`}});
+  if(!r.ok) throw new Error('drive list failed: '+r.status);
+  const d=await r.json();
+  return (d.files&&d.files[0])?d.files[0].id:null;
+}
+async function driveCreateFolder(token){
+  const r=await fetch(`${DRIVE_API}/files`,{
+    method:'POST', headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+    body:JSON.stringify({name:DRIVE_FOLDER_NAME, mimeType:'application/vnd.google-apps.folder'})
+  });
+  if(!r.ok) throw new Error('folder create failed: '+r.status);
+  return (await r.json()).id;
+}
+async function driveFindFile(token,folderId){
+  const q=encodeURIComponent(`name='${DRIVE_FILE_NAME}' and '${folderId}' in parents and trashed=false`);
+  const r=await fetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name)&spaces=drive`,{headers:{Authorization:`Bearer ${token}`}});
+  if(!r.ok) throw new Error('drive list failed: '+r.status);
+  const d=await r.json();
+  return (d.files&&d.files[0])?d.files[0].id:null;
+}
+// multipart/related の本体を組み立て（メタ情報＋JSON本体）
+function buildMultipart(meta,jsonStr){
+  const boundary='zumen_'+Date.now().toString(36);
+  const body=
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n`+
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${jsonStr}\r\n`+
+    `--${boundary}--`;
+  return {body,boundary};
+}
+async function driveUploadFile(token,folderId,fileId,jsonStr){
+  const meta=fileId?{}:{name:DRIVE_FILE_NAME,parents:[folderId]};
+  const {body,boundary}=buildMultipart(meta,jsonStr);
+  const url=fileId?`${DRIVE_UPLOAD_API}/${fileId}?uploadType=multipart`:`${DRIVE_UPLOAD_API}?uploadType=multipart`;
+  const r=await fetch(url,{
+    method:fileId?'PATCH':'POST',
+    headers:{Authorization:`Bearer ${token}`,'Content-Type':`multipart/related; boundary=${boundary}`},
+    body
+  });
+  if(!r.ok) throw new Error('upload failed: '+r.status);
+  return r.json();
+}
+// バックアップ対象は「全部」：図面リスト・ピン・朱書き/図形/計測・撮影計画・台帳メタ
+function buildBackupPayload(){
+  return JSON.stringify({
+    schema:1, savedAt:new Date().toISOString(), appVersion:'v7.9',
+    drawings, pins, strokes, ledgerPhotoMeta, ledgerPinMeta, ledgerPlan,
+    dwgSeq, slotSeq
+  });
+}
+async function saveToDrive(){
+  const clientId=driveClientId();
+  if(!clientId){ openDriveSetup(); return; }
+  toast('Googleドライブへ保存中…','');
+  try{
+    const token=await ensureDriveToken();
+    let folderId=lsGet('driveFolderId');
+    if(!folderId){ folderId=await driveFindFolder(token) || await driveCreateFolder(token); lsSet('driveFolderId',folderId); }
+    let fileId=lsGet('driveFileId');
+    if(!fileId){ fileId=await driveFindFile(token,folderId); if(fileId) lsSet('driveFileId',fileId); }
+    const payload=buildBackupPayload();
+    const result=await driveUploadFile(token,folderId,fileId,payload);
+    lsSet('driveFileId',result.id);
+    lsSet('driveLastSaved', new Date().toISOString());
+    renderDriveBox();
+    toast('Googleドライブへ保存しました','ok');
+  }catch(e){
+    console.error(e);
+    if(e.message==='NO_CLIENT_ID'){ openDriveSetup(); return; }
+    toast('Googleドライブへの保存に失敗しました。接続設定をご確認ください','warn');
+  }
+}
+function resetDriveSetup(){
+  ['driveClientId','driveEmail','driveFolderId','driveFileId','driveLastSaved'].forEach(lsDel);
+  driveToken=null; driveTokenExp=0; gisClient=null;
+  renderDriveBox();
+  toast('Googleドライブの接続設定をリセットしました','warn');
+}
+function renderDriveBox(){
+  const wrap=$('#driveBoxWrap'); if(!wrap) return;
+  const clientId=driveClientId();
+  const email=lsGet('driveEmail');
+  const last=lsGet('driveLastSaved');
+  if(!clientId){
+    wrap.innerHTML=`<div class="drive-box">
+      <p class="p-note">この図面データ一式（図面・ピン・朱書き・計測・台帳・写真）をGoogleドライブに保存できます。ドライブ上に見えるフォルダを作って保存するので、他の人とも共有できます。初回のみ設定が必要です。</p>
+      <button class="btn-outline" id="btnDriveSetup">＋ Googleドライブ連携を設定</button>
+    </div>`;
+  }else{
+    wrap.innerHTML=`<div class="drive-box">
+      <div class="drive-acct">
+        <span class="drive-email ${email?'':'muted'}">${email?escHtml(email):'未接続（保存時にログインします）'}</span>
+        <button class="link-btn" id="btnDriveReset">設定をリセット</button>
+      </div>
+      <div class="drive-last">${last?`最終保存：${new Date(last).toLocaleString('ja-JP')}`:'まだ保存されていません'}</div>
+      <button class="btn-primary drive-save-btn" id="btnDriveSave">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15a4 4 0 010-8 5 5 0 019.9-1A4.5 4.5 0 0119 15H4z"/></svg>
+        Googleドライブへ保存
+      </button>
+    </div>`;
+  }
+  bindDriveBox(); // innerHTML を差し替えたので、その都度ボタンへ結び直す
+}
+function bindDriveBox(){
+  const s1=$('#btnDriveSetup'); if(s1) s1.addEventListener('click',openDriveSetup);
+  const s2=$('#btnDriveReset'); if(s2) s2.addEventListener('click',()=>{ if(confirm('Googleドライブの接続設定をリセットします。よろしいですか？')) resetDriveSetup(); });
+  const s3=$('#btnDriveSave'); if(s3) s3.addEventListener('click',saveToDrive);
+}
+function openDriveSetup(){
+  $('#driveClientIdInput').value=driveClientId();
+  $('#driveSetupScrim').classList.add('show');
+}
+function closeDriveSetup(){ $('#driveSetupScrim').classList.remove('show'); }
+function commitDriveSetup(){
+  const v=($('#driveClientIdInput').value||'').trim();
+  if(!v){ toast('クライアントIDを入力してください','warn'); return; }
+  lsSet('driveClientId',v);
+  gisClient=null; driveToken=null; driveTokenExp=0; // クライアントIDが変わった可能性があるので作り直す
+  closeDriveSetup();
+  renderDriveBox();
+  toast('設定を保存しました。「Googleドライブへ保存」から連携できます','ok');
+}
+$('#driveSetupClose').addEventListener('click',closeDriveSetup);
+$('#driveSetupCancel').addEventListener('click',closeDriveSetup);
+$('#driveSetupSave').addEventListener('click',commitDriveSetup);
+$('#driveSetupScrim').addEventListener('click',e=>{ if(e.target.id==='driveSetupScrim') closeDriveSetup(); });
+
+/* ===== 出力プレビュー =====
+   PDFと同じページ組みで画面に表示する。jsPDFは不要なのでオフラインでも確認できる。 */
+let lpvCells=null;
+async function openLedgerPreview(){
+  const d=drawings.find(x=>x.id===ledgerDwgId);
+  if(!d) return;
+  const cells=ledgerCells();
+  if(!cells.length){ toast('写真も枠もないためプレビューできません','warn'); return; }
+  lpvCells=cells;
+  const {perPage}=lpageGeom();
+  const pageCount=Math.ceil(cells.length/perPage);
+  const pr=ledgerProgress(ledgerDwgId);
+  $('#lpvSub').textContent=`${d.name} · 全${pageCount}ページ / ${cells.length}コマ`+(pr.short?`（未撮影 ${pr.short}）`:'');
+  $('#lpvBody').innerHTML='<div class="lpv-loading">プレビューを作成中…</div>';
+  $('#lpv').classList.add('show');
+  // 1ページずつ描いて順に足していく（ページ数が多くても最初の1枚が早く出る）
+  for(let pg=0;pg<pageCount;pg++){
+    const cv=await renderLedgerPage(cells,pg,pageCount,d,1.6); // 画面表示用の倍率
+    if(!$('#lpv').classList.contains('show')) return; // 生成中に閉じられたら中断
+    if(pg===0) $('#lpvBody').innerHTML='';
+    const wrap=document.createElement('div');
+    wrap.className='lpv-page';
+    const no=document.createElement('div');
+    no.className='lpv-page-no'; no.textContent=`${pg+1} / ${pageCount}`;
+    cv.className='lpv-canvas';
+    wrap.appendChild(cv); wrap.appendChild(no);
+    $('#lpvBody').appendChild(wrap);
+  }
+}
+function closeLedgerPreview(){ $('#lpv').classList.remove('show'); $('#lpvBody').innerHTML=''; lpvCells=null; }
 
 async function exportLedgerPDF(){
   const d=drawings.find(x=>x.id===ledgerDwgId);
   const cells=ledgerCells();
-  if(!cells.length){ toast('写真がないため出力できません','warn'); return; }
+  if(!cells.length){ toast('写真も枠もないため出力できません','warn'); return; }
   if(!state.online){ toast('PDF出力はオンライン時のみ利用できます','warn'); return; }
   toast('PDFを生成中…','');
   try{
@@ -2311,50 +3135,16 @@ async function exportLedgerPDF(){
     return;
   }
   const { jsPDF } = window.jspdf;
-  // A4横（landscape）。画像に忠実な3列グリッド。
-  const COLS=3, ROWS=2, PER_PAGE=COLS*ROWS;
-  // Canvasは高解像度で描いてから貼る（きれいに出すため実寸の約2.5倍）
-  const SC=2.5;
-  const pageW=1123, pageH=794; // A4横 96dpi相当のpx（比率のみ利用）
-  const margin=28;
-  const gapX=14, gapY=14;
-  const cellW=(pageW-margin*2-gapX*(COLS-1))/COLS;
-  const photoH=cellW*0.72;
-  const lineH=26;
-  const maxLines=3; // セル高さ計算の基準（実際の行数がこれを超えても描画はする）
-  const cellH=photoH+lineH*maxLines;
-  const pad=8;
-
-  const pdf=new jsPDF({orientation:'landscape',unit:'px',format:[pageW,pageH]});
-  const pageCount=Math.ceil(cells.length/PER_PAGE);
-
+  const g=LPAGE, {perPage}=lpageGeom();
+  const SC=2.5; // 貼り込み用は高解像度で
+  const pdf=new jsPDF({orientation:'landscape',unit:'px',format:[g.pageW,g.pageH]});
+  const pageCount=Math.ceil(cells.length/perPage);
   for(let pg=0;pg<pageCount;pg++){
-    const cv=document.createElement('canvas');
-    cv.width=pageW*SC; cv.height=pageH*SC;
-    const ctx=cv.getContext('2d');
-    ctx.scale(SC,SC);
-    ctx.fillStyle='#fff';ctx.fillRect(0,0,pageW,pageH);
-    // ヘッダ（図面名・ページ）
-    ctx.fillStyle='#111';ctx.font='bold 18px sans-serif';ctx.textBaseline='alphabetic';
-    ctx.fillText(`写真台帳　${d.name}（${d.floor}）`, margin, 24);
-    ctx.font='12px sans-serif';ctx.fillStyle='#666';
-    ctx.fillText(`${pg+1} / ${pageCount}`, pageW-margin-40, 24);
-    ctx.strokeStyle='#111';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(margin,32);ctx.lineTo(pageW-margin,32);ctx.stroke();
-
-    const gridTop=44;
-    const pageCells=cells.slice(pg*PER_PAGE,(pg+1)*PER_PAGE);
-    // 各セルを順に描画（画像ロードを待つ）
-    for(let i=0;i<pageCells.length;i++){
-      const col=i%COLS, row=Math.floor(i/COLS);
-      const x=margin+col*(cellW+gapX);
-      const y=gridTop+row*(cellH+gapY);
-      await drawCell(ctx,pageCells[i],x,y,cellW,photoH,lineH,pad);
-    }
+    const cv=await renderLedgerPage(cells,pg,pageCount,d,SC);
     const imgData=cv.toDataURL('image/jpeg',0.85);
-    if(pg>0) pdf.addPage([pageW,pageH],'landscape');
-    pdf.addImage(imgData,'JPEG',0,0,pageW,pageH);
+    if(pg>0) pdf.addPage([g.pageW,g.pageH],'landscape');
+    pdf.addImage(imgData,'JPEG',0,0,g.pageW,g.pageH);
   }
-
   const fname=`写真台帳_${d.name.replace(/\s+/g,'_')}_${todayStr()}.pdf`;
   pdf.save(fname);
   toast('PDFを出力しました','');
@@ -2516,9 +3306,14 @@ function setPannoTool(t){
   // ペン消しゴムボタンはペンモード時のみ表示。オン時は赤系で強調。
   $('#pannoPenErase').style.display = (t==='pen')?'':'none';
   $('#pannoPenErase').classList.toggle('erase-on', t==='pen' && pannoPenErase);
-  // 図形サブ選択・スタイル行の表示（消去モード中はスタイル不要）
+  // 図形サブ選択の表示
   $('#pannoShapes').classList.toggle('show',t==='shape');
-  $('#pannoStyle').classList.toggle('show',(t==='pen'&&!pannoPenErase)||t==='shape');
+  // スタイル行（色・太さ）はペン／図形で常に表示。
+  // ※消去モードでも出したままにするのは重要：ここで行を消すとドックの位置が動き、
+  //   指を置いた位置とボタンがずれて iOS Safari の click が不発になるため（消しゴムが押せない不具合の主因）。
+  //   代わりに消去モード中は薄く無効化して「今は使わない」ことを示す。
+  $('#pannoStyle').classList.toggle('show',t==='pen'||t==='shape');
+  $('#pannoStyle').classList.toggle('dimmed', t==='pen' && pannoPenErase);
   // カーソル：消去モードは専用、描画系はcrosshair、移動はdefault
   pannoCanvas.style.cursor = (t==='nav')?'default':((t==='pen'&&pannoPenErase)?'cell':'crosshair');
   redrawPanno();
@@ -2891,7 +3686,7 @@ function renderPins(){
 }
 function editBlockReason(){
   const d=dwg(), v=viewingVerObj();
-  if(state.role!=='field') return `現在の役割（${state.role==='admin'?'管理者':'作図担当'}）ではペン・図形・ピンを追加できません。現場役割に切り替えてください。`;
+  if(state.role!=='field') return `現在の役割（作図担当）ではペン・図形・ピンを追加できません。現場役割に切り替えてください。`;
   if(!state.online && !d.cached) return 'オフラインのため、この図面は端末に保存されていません。ペン・図形・ピンを追加できません。';
   if(v.status==='superseded') return '旧版のためペン・図形・ピンを追加できません。最新版をご覧ください。';
   return null;
@@ -3004,6 +3799,7 @@ $('#pinNote').addEventListener('input',e=>{const p=curPinObj();if(p)p.note=e.tar
 $('#pinDelete').addEventListener('click',()=>{
   const p=curPinObj();if(!p)return;
   pins[state.selectedId]=pinList().filter(x=>x.id!==p.id);
+  if(ledgerPlan[state.selectedId]) delete ledgerPlan[state.selectedId][p.id]; // 撮影計画も一緒に破棄
   toast('ピンを削除しました','warn');closePin();
 });
 
@@ -3085,18 +3881,22 @@ function renderPhotoGrid(){
   if(!p.photos.length){g.innerHTML='<div class="photo-empty">写真がありません。「写真を追加」で現場写真を撮影・選択、または「サンプル」で試せます。</div>';return;}
   g.innerHTML=p.photos.map((src,i)=>`<div class="photo-cell"><img src="${src}" data-i="${i}"><button class="rm" data-rm="${i}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>`).join('');
   g.querySelectorAll('img').forEach(im=>im.addEventListener('click',()=>openLightbox(im.src)));
-  g.querySelectorAll('.rm').forEach(b=>b.addEventListener('click',()=>{p.photos.splice(+b.dataset.rm,1);renderPhotoGrid();renderPins();renderContext();}));
+  g.querySelectorAll('.rm').forEach(b=>b.addEventListener('click',()=>{
+    const [gone]=p.photos.splice(+b.dataset.rm,1);
+    detachSrcFromPlan(state.selectedId,gone); // 枠は残したまま「未撮影」へ戻す
+    renderPhotoGrid();renderPins();renderContext();renderList();
+  }));
 }
 $('#btnAddPhoto').addEventListener('click',()=>$('#photoInput').click());
 $('#photoInput').addEventListener('change',e=>{
   const p=curPinObj();if(!p)return;
   const files=[...e.target.files];let left=files.length;
-  files.forEach(f=>{const r=new FileReader();r.onload=()=>{p.photos.push(r.result);if(--left===0){renderPhotoGrid();renderPins();renderContext();}};r.readAsDataURL(f);});
+  files.forEach(f=>{const r=new FileReader();r.onload=()=>{p.photos.push(r.result);if(--left===0){renderPhotoGrid();renderPins();renderContext();renderList();}};r.readAsDataURL(f);});
   e.target.value='';
 });
 $('#btnSample').addEventListener('click',()=>{
   const p=curPinObj();if(!p)return;
-  p.photos.push(samplePhoto(p.photos.length+1));renderPhotoGrid();renderPins();renderContext();
+  p.photos.push(samplePhoto(p.photos.length+1));renderPhotoGrid();renderPins();renderContext();renderList();
 });
 function samplePhoto(n){
   const cv=document.createElement('canvas');cv.width=320;cv.height=240;const x=cv.getContext('2d');
@@ -3120,6 +3920,136 @@ $('#lbClose').addEventListener('click',()=>$('#lightbox').classList.remove('show
 $('#lightbox').addEventListener('click',e=>{if(e.target.id==='lightbox')$('#lightbox').classList.remove('show');});
 $('#sheetScrim').addEventListener('click',closePin);
 
+/* ===== 図面の取り込み（新規ボタン）=====
+   画像/SVG はそのまま、PDF は pdf.js（CDNから必要時ロード＝オンライン時のみ）で1ページ目を画像化。
+   座標系は図面ごと（sheetW/sheetH）。長辺1600単位に正規化してキャンバスのメモリを一定に保つ。 */
+const IMPORT_MAX_UNIT=1600;
+let dwgSeq=1, pendingImport=null;
+
+let pdfjsLoading=null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve();
+  if(pdfjsLoading) return pdfjsLoading;
+  pdfjsLoading=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload=()=>{ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(e){} res(); };
+    s.onerror=()=>{ pdfjsLoading=null; rej(new Error('pdf.js load failed')); };
+    document.head.appendChild(s);
+  });
+  return pdfjsLoading;
+}
+function fileToDataUrl(f){
+  return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error('read failed'));r.readAsDataURL(f);});
+}
+function imgSize(src){
+  return new Promise((res,rej)=>{const im=new Image();im.onload=()=>res({w:im.naturalWidth||im.width,h:im.naturalHeight||im.height});im.onerror=()=>rej(new Error('decode failed'));im.src=src;});
+}
+// SVGの実寸は viewBox から拾う（width/height 未指定のSVGは naturalWidth が既定値になり当てにならない）
+async function svgSizeFallback(file){
+  try{
+    const t=await file.text();
+    const m=t.match(/viewBox\s*=\s*["']\s*([-\d.]+)[\s,]+([-\d.]+)[\s,]+([-\d.]+)[\s,]+([-\d.]+)\s*["']/i);
+    if(m) return {w:parseFloat(m[3]),h:parseFloat(m[4])};
+  }catch(e){}
+  return null;
+}
+async function pdfFirstPage(file){
+  await loadPdfJs();
+  const buf=await file.arrayBuffer();
+  const pdf=await window.pdfjsLib.getDocument({data:buf}).promise;
+  const page=await pdf.getPage(1);
+  const v1=page.getViewport({scale:1});
+  const scale=Math.min(3, 2200/Math.max(v1.width,v1.height));
+  const vpt=page.getViewport({scale});
+  const cv=document.createElement('canvas');
+  cv.width=Math.round(vpt.width); cv.height=Math.round(vpt.height);
+  const c=cv.getContext('2d'); c.fillStyle='#FFFFFF'; c.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:c,viewport:vpt}).promise;
+  return {src:cv.toDataURL('image/jpeg',0.86), w:cv.width, h:cv.height, pages:pdf.numPages};
+}
+// 長辺 IMPORT_MAX_UNIT に正規化した座標系サイズ（画像自体の解像度は落とさない）
+function sheetUnits(w,h){
+  const k=Math.min(1, IMPORT_MAX_UNIT/Math.max(w,h));
+  return {w:Math.max(1,Math.round(w*k)), h:Math.max(1,Math.round(h*k))};
+}
+function baseName(n){ return (n||'図面').replace(/\.[^.]+$/,''); }
+
+function openImportDialog(){
+  $('#impPreview').innerHTML='<span class="ph">読み込み中…</span>';
+  $('#impMeta').textContent='';
+  $('#impAdd').disabled=true;
+  $('#impGroupNewRow').style.display='none';
+  const groups=[...new Set(drawings.map(d=>d.group))];
+  $('#impGroup').innerHTML=groups.map(g=>`<option value="${g}">${g}</option>`).join('')+'<option value="__new">＋ 新しい分類…</option>';
+  $('#impGroupNew').value='';
+  $('#impScrim').classList.add('show');
+}
+function closeImportDialog(){ $('#impScrim').classList.remove('show'); pendingImport=null; }
+
+async function handleImportFile(file){
+  openImportDialog();
+  $('#impName').value=baseName(file.name);
+  $('#impFloor').value='';
+  try{
+    const isPdf=/pdf$/i.test(file.type)||/\.pdf$/i.test(file.name);
+    let info;
+    if(isPdf){
+      $('#impPreview').innerHTML='<span class="ph">PDFを読み込み中…<br>（初回はオンライン接続が必要です）</span>';
+      info=await pdfFirstPage(file);
+    }else{
+      const isSvg=/svg/i.test(file.type)||/\.svg$/i.test(file.name);
+      const src=await fileToDataUrl(file);
+      // SVGは width/height 未指定だとブラウザが既定サイズ（Chromium: 300×150 基準）を返すので viewBox を優先
+      let sz=isSvg?await svgSizeFallback(file):null;
+      if(!sz||!sz.w||!sz.h) sz=await imgSize(src);
+      if(!sz||!sz.w||!sz.h) throw new Error('size unknown');
+      info={src,w:sz.w,h:sz.h,pages:1};
+    }
+    pendingImport=info;
+    $('#impPreview').innerHTML=`<img src="${info.src}" alt="プレビュー">`;
+    const u=sheetUnits(info.w,info.h);
+    $('#impMeta').textContent=`${info.w}×${info.h}px → 座標系 ${u.w}×${u.h}`+(info.pages>1?`　/　全${info.pages}ページ中1ページ目`:'');
+    $('#impAdd').disabled=false;
+    if(info.pages>1) toast(`PDFは1ページ目のみ取り込みます（全${info.pages}ページ）`,'warn');
+  }catch(e){
+    $('#impPreview').innerHTML='<span class="ph">読み込めませんでした。<br>PDFはオンライン時のみ、画像はPNG/JPEG/SVGに対応しています。</span>';
+    toast('図面を読み込めませんでした','warn');
+  }
+}
+function commitImport(){
+  if(!pendingImport) return;
+  const name=($('#impName').value||'').trim()||'無題の図面';
+  let group=$('#impGroup').value;
+  if(group==='__new') group=($('#impGroupNew').value||'').trim()||'その他';
+  const floor=($('#impFloor').value||'').trim()||'—';
+  const u=sheetUnits(pendingImport.w,pendingImport.h);
+  const id='u'+(++dwgSeq);
+  drawings.push({
+    id,name,group,floor,cached:true,seenNew:false,imported:true,
+    mmPerUnit:DEFAULT_MM_PER_UNIT, sheetSrc:pendingImport.src, sheetW:u.w, sheetH:u.h,
+    versions:[{v:'1.0',status:'published',date:todayStr().replace(/-/g,'/'),note:'取り込んだ図面を初版として登録。',diff:{tag:'REV.1.0'}}],
+  });
+  closeImportDialog();
+  state.selectedId=id; state.viewingVer=null; setTool('nav');
+  closeDrawers(); renderAll(); fitView();
+  toast(`${name} を v1.0（最新）として追加しました`,'ok');
+  setTimeout(()=>toast('縮尺は未設定です。計測の前に「縮尺」から設定してください','warn'),2600);
+}
+$('#btnNewDwg').addEventListener('click',()=>$('#dwgImportInput').click());
+$('#dwgImportInput').addEventListener('change',e=>{
+  const f=e.target.files&&e.target.files[0];
+  e.target.value=''; // 同じファイルを続けて選べるように
+  if(f) handleImportFile(f);
+});
+$('#impGroup').addEventListener('change',e=>{
+  $('#impGroupNewRow').style.display = e.target.value==='__new' ? '' : 'none';
+});
+$('#impClose').addEventListener('click',closeImportDialog);
+$('#impCancel').addEventListener('click',closeImportDialog);
+$('#impAdd').addEventListener('click',commitImport);
+$('#impScrim').addEventListener('click',e=>{ if(e.target.id==='impScrim') closeImportDialog(); });
+
 /* ===== render ===== */
 function renderList(){
   const groups={};drawings.forEach(d=>{(groups[d.group]=groups[d.group]||[]).push(d);});
@@ -3129,18 +4059,21 @@ function renderList(){
     groups[g].forEach(d=>{
       const pub=publishedVer(d);const locked=(!state.online&&!d.cached);
       const showNew=state.role==='field'&&d.seenNew&&!locked;
-      const photoTotal=(pins[d.id]||[]).reduce((s,p)=>s+p.photos.length,0);
+      const pr=ledgerProgress(d.id);
+      const badgeTxt=pr.total?`${pr.done}/${pr.total}`:'0';
+      const badgeCls=pr.total?(pr.short?'short':'has'):'';
       html+=`<div class="dwg ${d.id===state.selectedId?'active':''} ${locked?'locked':''}" data-id="${d.id}">
         ${showNew?'<span class="badge-new">NEW</span>':''}
         <div class="title">${d.name}</div>
         <div class="r2">
           <span class="ver-tag pub">v${pub?pub.v:'—'} 最新</span>
+          ${d.imported?'<span class="imported-chip">取り込み</span>':''}
           ${d.cached?`<span class="chip cache-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>保存済</span>`
             :`<span class="chip">${locked?'未保存':'クラウド'}</span>`}
         </div>
         <button class="ledger-btn" data-ledger="${d.id}" title="写真台帳を開く">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z"/><path d="M4 9h16"/><circle cx="8" cy="14" r="1.6"/><path d="M11 15l2-2 3 3"/></svg>
-          写真台帳<span class="cnt ${photoTotal?'has':''}">${photoTotal}</span>
+          写真台帳<span class="cnt ${badgeCls}">${badgeTxt}</span>
         </button></div>`;
     });
   }
@@ -3159,13 +4092,16 @@ function renderList(){
 }
 function renderViewer(){
   const d=dwg(),v=viewingVerObj(),locked=(!state.online&&!d.cached);
+  applySheetSize(d); // 取り込み図面は固有の座標系（inkLayer のサイズもこれに追従）
   $('#vhTitle').textContent=d.name;
   $('#vhMeta').textContent=`${d.floor} · ${d.group}`;
   let pill=v.status==='published'?`<span class="status-pill pub"><span class="d"></span>最新 v${v.v}</span>`
     :v.status==='draft'?`<span class="status-pill draft"><span class="d"></span>ドラフト v${v.v}</span>`
     :`<span class="status-pill old"><span class="d"></span>旧版 v${v.v}</span>`;
   $('#statusPill').innerHTML=pill;
-  $('#sheetHost').innerHTML=sheetSVG(v.diff);
+  $('#sheetHost').innerHTML = d.sheetSrc
+    ? `<img id="sheet" src="${d.sheetSrc}" width="${CW}" height="${CH}" alt="${d.name}" draggable="false">`
+    : sheetSVG(v.diff);
   redrawInk();
   const wm=$('#watermark');
   if(v.status==='superseded'){wm.classList.add('show');let r='';for(let i=0;i<7;i++)r+=`<div class="row">旧版 <small>SUPERSEDED</small> 旧版 <small>SUPERSEDED</small></div>`;$('#wmRows').innerHTML=r;}
@@ -3189,26 +4125,29 @@ function renderContext(){
       <div class="top"><span class="vnum">v${v.v}</span><span class="mini-pill ${cls}">${lbl}</span></div>
       <div class="vdate">${v.date}</div><div class="vnote">${v.note}</div></div>`;
   });
+  // 管理役割を廃止（v7.8）。仮登録・公開はどちらも作図役割から行う。
   const draft=d.versions.find(v=>v.status==='draft');
-  if(state.role==='admin'&&draft){
-    vh=`<div class="approve-box"><h4>⚑ 公開承認待ち</h4>
-      <p>作図担当が <b>v${draft.v}</b> を仮登録しました。公開すると全現場端末へ一斉同期・プッシュ通知されます。</p>
-      <button class="btn-primary" id="btnPublish"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>最新版として公開</button>
-      </div>`+vh;
-  }
   if(state.role==='drafter'){
     vh=`<div class="approve-box neutral"><h4>作図担当の操作</h4>
-      <p>変換元（Visio / CAD / Excel）を投入すると、クラウドで自動的にベクターPDFへ変換し「仮登録（ドラフト）」します。<b>公開は管理者のみ</b>が行えます。</p>
+      <p>変換元（Visio / CAD / Excel）を投入すると、クラウドで自動的にベクターPDFへ変換し「仮登録（ドラフト）」します。</p>
       <button class="btn-outline" id="btnUpload">＋ 図面を投入して仮登録</button></div>`+vh;
+    if(draft){
+      vh=`<div class="approve-box"><h4>⚑ 公開待ち</h4>
+        <p><b>v${draft.v}</b> を仮登録中です。内容を確認し、問題なければ公開してください。公開すると全現場端末へ一斉同期・プッシュ通知されます。</p>
+        <button class="btn-primary" id="btnPublish"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>最新版として公開</button>
+        </div>`+vh;
+    }
   }
   $('#paneVer').innerHTML=vh;
 
-  let ch=`<div class="section-lbl">選択的オフライン保存</div><p class="p-note">通信の悪い地下や僻地に備え、必要な図面だけ端末に保存します。オフライン時は保存済のみ開けます。</p>`;
+  let ch=`<div class="section-lbl">クラウド保存（Googleドライブ）</div><div id="driveBoxWrap"></div>
+    <div class="section-lbl" style="margin-top:22px">選択的オフライン保存</div><p class="p-note">通信の悪い地下や僻地に備え、必要な図面だけ端末に保存します。オフライン時は保存済のみ開けます。</p>`;
   drawings.forEach(d2=>{
     ch+=`<div class="cache-row"><div><div class="lbl">${d2.name}</div><div class="sub">${d2.group} · ${d2.floor}</div></div>
       <div class="switch ${d2.cached?'on':''}" data-cache="${d2.id}"><div class="knob"></div></div></div>`;
   });
   $('#paneCache').innerHTML=ch;
+  renderDriveBox();
 
   // pin index: which object is where, with photos
   const list=pinList();
@@ -3297,7 +4236,7 @@ $('#netBtn').addEventListener('click',()=>{
 /* ===== drawers ===== */
 function openDrawer(id){$('#scrim').classList.add('show');$('#'+id).classList.add('open');}
 function closeDrawers(){$('#scrim').classList.remove('show');document.querySelectorAll('.drawer').forEach(d=>d.classList.remove('open'));}
-$('#openSheets').addEventListener('click',()=>openDrawer('drawerSheets'));
+$('#openSheets').addEventListener('click',()=>{renderList();openDrawer('drawerSheets');});
 $('#openInfo').addEventListener('click',()=>{$('#infoTitle').textContent=dwg().name;openDrawer('drawerInfo');});
 $('#scrim').addEventListener('click',closeDrawers);
 document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',closeDrawers));

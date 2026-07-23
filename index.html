@@ -520,6 +520,27 @@
        （写真注釈エディタの画像 .panno-holder img には v6.6 で同種対策済みだったが、メイン図面画像に入れ忘れていた）。
        描画座標は #inkLayer の矩形基準で計算しているため pointer-events:none にしても座標はズレない。
 -->
+
+<!--
+  build v7.35 (図面リストに削除機能)  — 各図面行のタイトル右（名称変更の隣）にゴミ箱ボタンを追加。押すと
+       確認ダイアログ（gConfirm）を挟み、OKで図面本体と紐づくデータを一括削除。掃除対象は pins[id] /
+       ledgerPlan[id] / ledgerPinMeta[id]、朱書き・図形・計測とアンドゥ履歴（strokes/inkHist/inkRedo/redoStrokes の
+       「id@バージョン」キー）、および該当写真src単位の ledgerPhotoMeta / photoInk / photoInkRedo。id接頭辞は
+       "id@" で厳密一致（u2 と u20 を取り違えない）。削除中の図面が選択中なら選択解除しnav・空状態へ。
+       ボタンは行クリックと stopPropagation で分離、svg は pointer-events:none。自動保存/次回Drive保存にも反映。
+-->
+
+<!--
+  build v7.36 (範囲/自由 選択ツール・フェーズ1：複数選択＋まとめて移動/削除)  — ドックに「選択」ツールを追加。
+       上部の選択バーで「範囲（矩形）／自由（なげなわ）」を切替。囲むと、中の図形（四角/円/直線/矢印/連続線）と
+       ペン（フリーハンド）を複数選択する（ピン・計測は対象外）。判定は「完全に囲んだものだけ」（代表点が
+       すべて内側：矩形は矩形内、なげなわは点内包/ray-casting）。選択をドラッグでまとめて移動（5pxしきい値）、
+       消しゴムボタンでまとめて削除。いずれもアンドゥ対応（beginInkTxn/commitInkTxn）。選択ツール中は1本指=囲み、
+       2本指=移動/ズーム（drawableに'select'を追加しpanLock適用、選択バーは.measure-barクラス共有でパン除外）。
+       選択状態は selMulti、囲み中は selDraft、移動元は selMoveOrig で管理。redrawInk で各選択の点線枠＋全体枠＋
+       囲み枠を描画。undo/clear等で消えた項目は list に無ければ選択から自動的に外す。
+       [フェーズ2予定] グループ化・コピー＆貼り付け（この土台の上に実装）。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -765,6 +786,10 @@
     color:var(--muted2);background:transparent}
   .rename-btn svg{width:14px;height:14px;pointer-events:none}
   .rename-btn:active{background:var(--panel3);color:var(--text)}
+  .del-btn{flex-shrink:0;width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    color:var(--muted2);background:transparent}
+  .del-btn svg{width:14px;height:14px;pointer-events:none}
+  .del-btn:active{background:rgba(240,68,56,.18);color:#F04438}
   .dwg .r2{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .ver-tag{font-family:var(--mono);font-size:12px;font-weight:600;padding:3px 9px;border-radius:6px}
   .ver-tag.pub{background:rgba(34,196,138,.14);color:var(--signal)}
@@ -1050,6 +1075,10 @@
   .measure-bar .mb-icon{display:flex;color:var(--signal)}
   .measure-bar .mb-hint{color:var(--ink2);white-space:nowrap}
   .measure-bar .mb-sep{width:1px;height:20px;background:var(--line2)}
+  .sel-toggle{display:flex;gap:3px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:3px}
+  .sel-mode-btn{height:30px;padding:0 12px;border-radius:7px;color:var(--muted);font-size:12.5px;font-weight:600;background:transparent}
+  .sel-mode-btn.on{background:var(--panel3);color:var(--text)}
+  .sel-mode-btn:active{transform:scale(.96)}
   .mb-scale{display:flex;align-items:center;gap:6px;cursor:pointer;
     background:var(--panel3);border:1px solid var(--line2);border-radius:8px;
     padding:5px 10px;color:var(--ink);font-size:12px}
@@ -1384,7 +1413,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.34 · 修正：図面上で描くと図形が消える（長押し誤認）</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.36 · 範囲/自由 選択ツール（複数選択・移動/削除）</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -1464,6 +1493,16 @@
     </button>
   </div>
 
+  <div class="measure-bar select-bar" id="selectBar">
+    <span class="mb-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
+    <div class="sel-toggle">
+      <button id="selModeRect" class="sel-mode-btn on">範囲</button>
+      <button id="selModeLasso" class="sel-mode-btn">自由</button>
+    </div>
+    <div class="mb-sep"></div>
+    <span class="mb-hint" id="selHint">囲んで選択（完全に囲んだものだけ）</span>
+  </div>
+
 
   <div class="blocker" id="blocker">
     <div class="ic"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 1l22 22M16.72 11.06A11 11 0 0119 12.55M5 12.55a11 11 0 015.17-2.39M10.71 5.05A16 16 0 0122.58 9M1.42 9a16 16 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"/></svg></div>
@@ -1495,6 +1534,10 @@
     <button class="dock-btn" id="btnMeasure">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.6 3.4l5 5L8.4 20.6l-5-5z"/><path d="M8.1 8.1l2 2M11.1 5.1l1.5 1.5M5.1 11.1l1.5 1.5M14.1 6.1l1.5 1.5"/></svg>
       計測
+    </button>
+    <button class="dock-btn" id="btnSelect">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+      選択
     </button>
     <div class="dock-sep"></div>
     <button class="dock-btn" id="btnUndo" disabled>
@@ -2029,7 +2072,7 @@ function sheetSVG(diff){
 /* ===== DATA ===== */
 // scale: the X structural grid spans 148 canvas units per bay, dimensioned 6,400 mm on the sheet.
 const DEFAULT_MM_PER_UNIT=6400/148; // ≈ 43.24 mm per canvas unit
-let state={role:'field',online:true,selectedId:null,viewingVer:null,tool:'nav',viewLock:false,shapeType:'rect',shiftOn:false,
+let state={role:'field',online:true,selectedId:null,viewingVer:null,tool:'nav',viewLock:false,shapeType:'rect',selMode:'rect',shiftOn:false,
   inkColor:'#E5372A',inkWidth:3.5,inkDash:false,inkFill:false,
   panelPos:{shape:'left',style:'right'},panelCollapsed:{shape:false,style:false},
   activeTab:'ver',curPin:null};
@@ -2329,6 +2372,62 @@ function shapeBounds(item){
   }
   return {x0:Math.min(item.x1,item.x2),x1:Math.max(item.x1,item.x2),y0:Math.min(item.y1,item.y2),y1:Math.max(item.y1,item.y2)};
 }
+/* ===== 範囲/自由選択（選択ツール）：図形＋ペン線を複数選択 ===== */
+const SEL_TYPES=['free','rect','ellipse','line','arrow','poly']; // 対象＝図形＋ペン（計測・ピンは対象外）
+let selMulti=[];   // 複数選択中のアイテム参照
+let selDraft=null; // 選択中のドラッグ（矩形/なげなわ）: {mode:'rect'|'lasso', x0,y0,x1,y1 or pts:[]}
+let selMoveOrig=null; // 移動中の元座標スナップショット
+function itemBBox(item){ // free も含めた外接矩形
+  if(item.type==='free'||item.type==='poly'){
+    const xs=item.pts.map(p=>p.x), ys=item.pts.map(p=>p.y);
+    return {x0:Math.min(...xs),x1:Math.max(...xs),y0:Math.min(...ys),y1:Math.max(...ys)};
+  }
+  return {x0:Math.min(item.x1,item.x2),x1:Math.max(item.x1,item.x2),y0:Math.min(item.y1,item.y2),y1:Math.max(item.y1,item.y2)};
+}
+function itemVerts(item){ // 「完全内包」判定に使う代表点
+  if(item.type==='free'||item.type==='poly') return item.pts.map(p=>({x:p.x,y:p.y}));
+  const b=itemBBox(item);
+  if(item.type==='rect'||item.type==='ellipse') return [{x:b.x0,y:b.y0},{x:b.x1,y:b.y0},{x:b.x1,y:b.y1},{x:b.x0,y:b.y1}];
+  return [{x:item.x1,y:item.y1},{x:item.x2,y:item.y2}]; // line / arrow
+}
+function pointInPoly(pt, poly){ // ray casting
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    if(((yi>pt.y)!==(yj>pt.y)) && (pt.x < (xj-xi)*(pt.y-yi)/((yj-yi)||1e-9)+xi)) inside=!inside;
+  }
+  return inside;
+}
+// 完全内包：矩形は代表点すべてが矩形内、なげなわは代表点すべてが多角形内
+function selectedByRect(item, r){
+  const x0=Math.min(r.x0,r.x1), x1=Math.max(r.x0,r.x1), y0=Math.min(r.y0,r.y1), y1=Math.max(r.y0,r.y1);
+  return itemVerts(item).every(p=>p.x>=x0&&p.x<=x1&&p.y>=y0&&p.y<=y1);
+}
+function selectedByLasso(item, pts){
+  if(pts.length<3) return false;
+  return itemVerts(item).every(p=>pointInPoly(p, pts));
+}
+function computeSelection(){
+  const arr=strokes[inkKey()]||[];
+  selMulti = arr.filter(it=> SEL_TYPES.includes(it.type) &&
+    (selDraft.mode==='rect' ? selectedByRect(it, selDraft) : selectedByLasso(it, selDraft.pts)));
+}
+function selGroupBBox(){ // 選択全体の外接矩形
+  if(!selMulti.length) return null;
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  selMulti.forEach(it=>{ const b=itemBBox(it); x0=Math.min(x0,b.x0);y0=Math.min(y0,b.y0);x1=Math.max(x1,b.x1);y1=Math.max(y1,b.y1); });
+  return {x0,y0,x1,y1};
+}
+function pointInSelGroup(pt){
+  const b=selGroupBBox(); if(!b) return false;
+  const m=10; return pt.x>=b.x0-m&&pt.x<=b.x1+m&&pt.y>=b.y0-m&&pt.y<=b.y1+m;
+}
+function clearMultiSel(){ selMulti=[]; selDraft=null; selMoveOrig=null; }
+function moveItemBy(item, dx, dy, orig){
+  if(item.type==='free'||item.type==='poly'){ item.pts.forEach((q,i)=>{ q.x=orig.pts[i].x+dx; q.y=orig.pts[i].y+dy; }); }
+  else { item.x1=orig.x1+dx; item.y1=orig.y1+dy; item.x2=orig.x2+dx; item.y2=orig.y2+dy; }
+}
+function snapItem(item){ return (item.type==='free'||item.type==='poly') ? {pts:item.pts.map(q=>({x:q.x,y:q.y}))} : {x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2}; }
 function hitTestShape(pt){
   const arr=strokes[inkKey()]||[];
   for(let i=arr.length-1;i>=0;i--){
@@ -2413,7 +2512,7 @@ vp.addEventListener('pointerdown',e=>{
   if(pointers.size===1) downInfo={x:e.clientX,y:e.clientY,moved:false};
   // 指で描ける/ピンを刺せるのは「ペンシル未使用のセッション」のみ。ペンシル使用後は指＝移動/ズーム専用。
   const inputCanDraw = e.pointerType!=='touch' || !penSeen;
-  const drawable=(state.tool==='pen'||state.tool==='shape'||state.tool==='measure') && canPinEdit() && inputCanDraw;
+  const drawable=(state.tool==='pen'||state.tool==='shape'||state.tool==='measure'||state.tool==='select') && canPinEdit() && inputCanDraw;
   const pinPlacing = state.tool==='pin' && canPinEdit() && inputCanDraw; // ④ ピン設置中も1本指移動を無効化
   if(pointers.size===1) panLock = drawable || pinPlacing; // 作図/ピン中の1本指は移動しない（余白でも）
   const isPoly=state.tool==='shape' && state.shapeType==='poly';
@@ -2467,12 +2566,24 @@ vp.addEventListener('pointerdown',e=>{
     curItem={type:'measure', x1:pt.x, y1:pt.y, x2:pt.x, y2:pt.y, color:MEASURE_COLOR, width:2};
     (strokes[inkKey()]=strokes[inkKey()]||[]).push(curItem);
     redoStrokes[inkKey()]=[];
+  } else if(pointers.size===1 && drawable && state.tool==='select' && overSheet(e.clientX,e.clientY)){
+    const pt=toCanvas(e.clientX,e.clientY);
+    if(selMulti.length && pointInSelGroup(pt)){
+      // 選択範囲の上を押した → まとめて移動を開始（beginInkTxnは上の共通行で実行済み）
+      selMoveOrig=selMulti.map(snapItem);
+      dragMode={mode:'selmove', sx:e.clientX, sy:e.clientY, startPt:pt, armed:false};
+    } else {
+      // 新しい囲み選択を開始
+      clearMultiSel();
+      selDraft = state.selMode==='lasso' ? {mode:'lasso', pts:[pt]} : {mode:'rect', x0:pt.x, y0:pt.y, x1:pt.x, y1:pt.y};
+      redrawInk();
+    }
   } else if(pointers.size>=2){
     if(curItem){ // abort in-progress item, switch to gesture
       const arr=strokes[inkKey()]; if(arr&&arr[arr.length-1]===curItem)arr.pop(); curItem=null; redrawInk();
     }
     cancelInkTxn(); // B: 中断した描画は履歴に残さない
-    dragMode=null; polyPending=false; hoverPt=null;
+    dragMode=null; polyPending=false; hoverPt=null; selDraft=null; selMoveOrig=null;
     downInfo=null; startGesture();
   } else {
     curItem=null; // pan with single finger (nav) or pending pin tap
@@ -2486,6 +2597,13 @@ vp.addEventListener('pointermove',e=>{
   // ペン消しゴム：なぞっている間、触れた free 線を消す
   if(penErasing){ eraseInkAt(toCanvas(e.clientX,e.clientY)); return; }
   if(dragMode){
+    if(dragMode.mode==='selmove'){
+      if(!dragMode.armed){ if(Math.abs(e.clientX-dragMode.sx)<5 && Math.abs(e.clientY-dragMode.sy)<5) return; dragMode.armed=true; }
+      const p2=toCanvas(e.clientX,e.clientY);
+      const dx=p2.x-dragMode.startPt.x, dy=p2.y-dragMode.startPt.y;
+      selMulti.forEach((it,i)=>moveItemBy(it,dx,dy,selMoveOrig[i]));
+      redrawInk(); return;
+    }
     const pt=toCanvas(e.clientX,e.clientY), item=dragMode.item;
     if(dragMode.mode==='move'){
       // ③ 誤移動防止：選択直後の微ブレでは動かさず、しきい値(5px)を超えてから移動開始
@@ -2538,6 +2656,12 @@ vp.addEventListener('pointermove',e=>{
     }
     redrawInk(); return;
   }
+  if(selDraft){
+    const pt=toCanvas(e.clientX,e.clientY);
+    if(selDraft.mode==='lasso'){ selDraft.pts.push(pt); }
+    else { selDraft.x1=pt.x; selDraft.y1=pt.y; }
+    redrawInk(); return;
+  }
   if(downInfo && (Math.abs(e.clientX-downInfo.x)>6||Math.abs(e.clientY-downInfo.y)>6)) downInfo.moved=true;
   if(polyPending){ updatePolyHover(e.clientX,e.clientY); return; } // finger down: rubber-band follows the touch
   if(panLock) return; // 作図ツール中：1本指では移動しない（移動は2本指のみ）
@@ -2561,6 +2685,8 @@ function endPointer(e){
   pointers.delete(e.pointerId);
   if(penErasing){ penErasing=false; } // なぞり消去の終了
   if(dragMode){ dragMode=null; redrawInk(); }
+  if(selMoveOrig){ selMoveOrig=null; }
+  if(selDraft){ computeSelection(); selDraft=null; redrawInk(); updateSelectBar(); }
   if(curItem){
     // discard a degenerate shape created by a mere tap with no drag (zero size, invisible)
     if(curItem.type!=='free' && curItem.x1===curItem.x2 && curItem.y1===curItem.y2){
@@ -2647,9 +2773,9 @@ function refreshInkBtns(){
   // 消しゴム：ペンモードでは「なぞり消去」のトグルとして常に使える。
   // 図形モードでは従来どおり「選択中の図形を削除」（選択時のみ有効）。
   const canEdit=!editBlockReason();
-  $('#btnErase').disabled = (state.tool==='pen') ? !canEdit : !selectedItem;
+  $('#btnErase').disabled = (state.tool==='pen') ? !canEdit : (state.tool==='select') ? !selMulti.length : !selectedItem;
   $('#btnErase').classList.toggle('erase-on', state.tool==='pen' && penEraseMode);
-  $('#btnErase').title = (state.tool==='pen') ? 'ペン消しゴム（なぞってペン線を消す）' : '選択中の線・図形を削除';
+  $('#btnErase').title = (state.tool==='pen') ? 'ペン消しゴム（なぞってペン線を消す）' : (state.tool==='select') ? '選択したものをまとめて削除' : '選択中の線・図形を削除';
 }
 // 1つの注釈アイテムを任意のcanvas contextに描く（図面・写真注釈で共用）。
 // polyのラバーバンド（描画中プレビュー）は draftInfo で受け取る。
@@ -2724,6 +2850,7 @@ function redrawInk(){
   ctx.lineCap='round';ctx.lineJoin='round';
   const list=strokes[inkKey()]||[];
   if(selectedItem && !list.includes(selectedItem)) deselectShape(); // e.g. removed by undo/clear
+  if(selMulti.length) selMulti=selMulti.filter(it=>list.includes(it)); // 消えたものは選択から外す
   const draftInfo={item:polyDraft, hoverPt:hoverPt};
   list.forEach(item=>drawInkItem(ctx,item,draftInfo));
   if(selectedItem){
@@ -2740,11 +2867,35 @@ function redrawInk(){
     }
     ctx.restore();
   }
+  // 複数選択（選択ツール）のハイライト
+  if(selMulti.length){
+    ctx.save();
+    ctx.strokeStyle='#3B82F6'; ctx.lineWidth=1.4; ctx.setLineDash([5,4]);
+    selMulti.forEach(it=>{ const b=itemBBox(it); ctx.strokeRect(b.x0-4,b.y0-4,(b.x1-b.x0)+8,(b.y1-b.y0)+8); });
+    const g=selGroupBBox();
+    if(g){ ctx.setLineDash([]); ctx.strokeStyle='rgba(59,130,246,.95)'; ctx.lineWidth=1.6;
+      ctx.strokeRect(g.x0-8,g.y0-8,(g.x1-g.x0)+16,(g.y1-g.y0)+16);
+      ctx.fillStyle='rgba(59,130,246,.08)'; ctx.fillRect(g.x0-8,g.y0-8,(g.x1-g.x0)+16,(g.y1-g.y0)+16); }
+    ctx.restore();
+  }
+  // 囲み選択ドラッグ中の枠（範囲/なげなわ）
+  if(selDraft){
+    ctx.save();
+    ctx.strokeStyle='#3B82F6'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]); ctx.fillStyle='rgba(59,130,246,.09)';
+    if(selDraft.mode==='rect'){
+      const x=Math.min(selDraft.x0,selDraft.x1), y=Math.min(selDraft.y0,selDraft.y1), w=Math.abs(selDraft.x1-selDraft.x0), h=Math.abs(selDraft.y1-selDraft.y0);
+      ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
+    } else {
+      const p=selDraft.pts; if(p.length){ ctx.beginPath(); ctx.moveTo(p[0].x,p[0].y); for(let i=1;i<p.length;i++)ctx.lineTo(p[i].x,p[i].y); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+    }
+    ctx.restore();
+  }
   refreshInkBtns();
 }
 function setTool(t){
   if(t!=='shape' && polyDraft) finishPoly();
   if(t!=='shape') deselectShape();
+  if(t!=='select') clearMultiSel(); // 選択ツールを離れたら複数選択を解除
   if(t!=='pen'){ penEraseMode=false; penErasing=false; } // ペン以外に移ったら消去モード解除
   polyPending=false;
   state.tool=t;
@@ -2753,13 +2904,15 @@ function setTool(t){
   $('#btnShape').classList.toggle('on',t==='shape');
   $('#btnPin').classList.toggle('on',t==='pin');
   $('#btnMeasure').classList.toggle('on',t==='measure');
+  $('#btnSelect').classList.toggle('on',t==='select');
   vp.classList.toggle('placing',t==='pin'||t==='shape'||t==='measure');
-  layoutPanels(); updateCollapsedGlyphs(); updateMeasureBar();
+  layoutPanels(); updateCollapsedGlyphs(); updateMeasureBar(); updateSelectBar();
   refreshInkBtns(); redrawInk();
   if(t==='pen')toast('ペン：1本指で描画、2本指で移動・拡大（元データは非破壊）','ok');
   if(t==='shape')toast('図形：ドラッグで描画。シフトで正方形・正円・45°直線に固定。連続線はタップで点を追加、ダブルタップで終了','ok');
   if(t==='pin')toast('ピン：図面タップで設置、ピンを長押し／ドラッグで移動','ok');
   if(t==='measure')toast('計測：2点をドラッグで実寸を表示。シフトで水平・垂直・45°に固定','ok');
+  if(t==='select')toast('選択：囲んで図形・ペンを複数選択。選択をドラッグで移動、消しゴムで削除','ok');
 }
 $('#btnNav').addEventListener('click',()=>setTool('nav'));
 $('#btnPen').addEventListener('click',()=>{
@@ -2849,6 +3002,11 @@ $('#btnPin').addEventListener('click',()=>{
 $('#btnMeasure').addEventListener('click',()=>{
   const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('measure');
 });
+$('#btnSelect').addEventListener('click',()=>{
+  const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('select');
+});
+$('#selModeRect').addEventListener('click',()=>{ state.selMode='rect'; selDraft=null; updateSelectBar(); });
+$('#selModeLasso').addEventListener('click',()=>{ state.selMode='lasso'; selDraft=null; updateSelectBar(); });
 $('#btnUndo').addEventListener('click',()=>{ undoInk(); });
 $('#btnRedo').addEventListener('click',()=>{ redoInk(); });
 // 全消去は破壊的操作なので、必ず確認ダイアログを挟む
@@ -2879,6 +3037,15 @@ $('#btnErase').addEventListener('click',()=>{
     return;
   }
   // 図形モード：選択中の図形を削除（従来動作）
+  if(state.tool==='select'){
+    if(!selMulti.length) return;
+    beginInkTxn();
+    const arr=strokes[inkKey()]||[];
+    selMulti.forEach(it=>{ const i=arr.indexOf(it); if(i>-1) arr.splice(i,1); });
+    clearMultiSel();
+    redrawInk(); commitInkTxn(); updateSelectBar();
+    return;
+  }
   if(!selectedItem)return;
   beginInkTxn();
   const arr=strokes[inkKey()]||[];
@@ -4034,6 +4201,19 @@ function updateMeasureBar(){
     $('#mbScaleVal').textContent=`1 : ${ratio.toLocaleString('en-US')}`;
   }
 }
+function updateSelectBar(){
+  const show=state.tool==='select';
+  const bar=$('#selectBar'); if(bar) bar.classList.toggle('show',show);
+  const r=$('#selModeRect'), l=$('#selModeLasso');
+  if(r) r.classList.toggle('on',state.selMode==='rect');
+  if(l) l.classList.toggle('on',state.selMode==='lasso');
+  const hint=$('#selHint');
+  if(show && hint){
+    hint.textContent = selMulti.length
+      ? `${selMulti.length}個選択中（ドラッグで移動・消しゴムで削除）`
+      : (state.selMode==='rect' ? '矩形でドラッグして囲む（完全に囲んだものだけ選択）' : 'なぞって囲む（完全に囲んだものだけ選択）');
+  }
+}
 
 /* ----- scale settings: single value (縮尺比), coefficient kept internal-only ----- */
 // physical basis: this sheet is treated as A2 at 1:200, i.e. one canvas unit = PAPER_MM_PER_UNIT on paper.
@@ -4721,6 +4901,7 @@ function renderList(){
         <div class="title-row">
           <div class="title">${escHtml(d.name)}</div>
           <button class="rename-btn" data-rename="${d.id}" title="名称を変更"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+          <button class="del-btn" data-del="${d.id}" title="この図面を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6"/></svg></button>
         </div>
         <div class="r2">
           <span class="ver-tag pub">v${pub?pub.v:'—'} 最新</span>
@@ -4751,6 +4932,39 @@ function renderList(){
     e.stopPropagation();
     openRenameDialog(btn.dataset.rename);
   }));
+  // 削除ボタン（行クリックと分離。確認ダイアログを挟む）
+  $('#dwgList').querySelectorAll('.del-btn').forEach(btn=>btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    deleteDrawing(btn.dataset.del);
+  }));
+}
+// 図面の削除：確認のうえ、本体と紐づくデータ（ピン・朱書き/図形/計測・撮影計画・台帳メタ・写真注釈）を掃除
+async function deleteDrawing(id){
+  const d=drawings.find(x=>x.id===id); if(!d) return;
+  const nPins=(pins[id]||[]).length;
+  const ok=await gConfirm({
+    title:'図面を削除しますか？',
+    desc:`「${escHtml(d.name)}」を削除します。${nPins?`ピン${nPins}件・`:''}この図面の朱書き/図形/計測・写真台帳・撮影計画もすべて削除されます。<br>この操作は元に戻せません。`,
+    ok:'削除', danger:true
+  });
+  if(!ok) return;
+  // src単位で持っているメタ（台帳メタ・写真注釈）も掃除するため、まず対象srcを集める
+  const srcs=new Set();
+  (pins[id]||[]).forEach(p=>(p.photos||[]).forEach(s=>srcs.add(s)));
+  Object.values(ledgerPlan[id]||{}).forEach(arr=>(arr||[]).forEach(sl=>{ if(sl && sl.src) srcs.add(sl.src); }));
+  srcs.forEach(s=>{ delete ledgerPhotoMeta[s]; delete photoInk[s]; delete photoInkRedo[s]; });
+  // 図面ID単位のストア
+  delete pins[id]; delete ledgerPlan[id]; delete ledgerPinMeta[id];
+  // 「id@バージョン」キーの朱書き・アンドゥ履歴
+  [strokes,inkHist,inkRedo,redoStrokes].forEach(store=>{
+    Object.keys(store).forEach(k=>{ if(k.indexOf(id+'@')===0) delete store[k]; });
+  });
+  // 本体を配列から除去
+  const idx=drawings.findIndex(x=>x.id===id); if(idx>-1) drawings.splice(idx,1);
+  // 選択中を消した場合の後始末
+  if(state.selectedId===id){ state.selectedId=null; state.viewingVer=null; deselectShape(); state.tool='nav'; }
+  toast(`「${d.name}」を削除しました`,'warn');
+  renderAll(); fitView();
 }
 let renameTargetId=null;
 function openRenameDialog(id){
@@ -4817,6 +5031,7 @@ function renderViewer(){
   $('#btnShape').classList.toggle('locked',!canEdit);
   $('#btnPin').classList.toggle('locked',!canEdit);
   $('#btnMeasure').classList.toggle('locked',!canEdit);
+  $('#btnSelect').classList.toggle('locked',!canEdit);
   if(!canEdit && state.tool!=='nav')setTool('nav');
   renderPins();
 }

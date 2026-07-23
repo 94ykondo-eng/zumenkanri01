@@ -509,6 +509,17 @@
           changelogの整合/JS構文）と playwright_smoke.py（起動エラー0・白紙作成・描画でUndo活性・閲覧ロック・
           自動保存復元）を追加。変更後・リリース前に回す運用を想定（回転の二重実装やタグのズレを事前に検知）。
 -->
+
+<!--
+  build v7.34 (バグ修正：図面上で描くと図形が消える／長押し誤認識)  — 取り込み図面・白紙は <img id="sheet"> で
+       表示しているが、この画像に長押し抑制の指定が無く、iOSが図面上の押し込みを「画像の長押し（保存/コピー・
+       選択・ドラッグ）」と誤認して描画ジェスチャーを奪っていた（pointercancel等で中断）。結果、指でもペンでも
+       毎回・確定的に、描いた図形が消える症状になっていた（内蔵SVGサンプル撤去後は常に画像表示のため常時発生）。
+       #sheet に -webkit-touch-callout:none / -webkit-user-select:none / user-select:none / -webkit-user-drag:none /
+       touch-action:none / pointer-events:none を付与し、画像側でイベント・長押しメニュー・選択・ドラッグを抑止。
+       （写真注釈エディタの画像 .panno-holder img には v6.6 で同種対策済みだったが、メイン図面画像に入れ忘れていた）。
+       描画座標は #inkLayer の矩形基準で計算しているため pointer-events:none にしても座標はズレない。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -594,7 +605,9 @@
     position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform;
     box-shadow:0 24px 70px rgba(0,0,0,.6);border-radius:3px;
   }
-  #sheet{display:block;background:var(--paper);border-radius:3px}
+  #sheet{display:block;background:var(--paper);border-radius:3px;
+    -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;
+    -webkit-user-drag:none;touch-action:none;pointer-events:none}
   #inkLayer{position:absolute;inset:0;pointer-events:none}
 
   .watermark{position:absolute;inset:0;pointer-events:none;overflow:hidden;border-radius:3px;display:none}
@@ -1371,7 +1384,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.33 · 安定化（自動保存堅牢化・エラーハンドラ・常設テスト）</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.34 · 修正：図面上で描くと図形が消える（長押し誤認）</span>
 </div>
 
 <!-- VIEWPORT -->

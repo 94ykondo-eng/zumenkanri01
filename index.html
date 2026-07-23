@@ -405,6 +405,110 @@
        写真（trash→再作成方式でバイナリを安全に更新）とJSONを保存し、フォルダは
        「図面共有システム_バックアップ」/「photos」の構成。
 -->
+
+<!--
+  build v7.26 (作図用の白紙機能)  — 図面リストのヘッダーに「白紙」ボタンを新設（＋新規の隣）。
+       押すと白紙作成ダイアログが開き、A4/A3 × 縦横 を選ぶと、方眼つきの白紙を v1.0（最新）として
+       追加してその図面を開く。作図担当が取り込み図面なしでもすぐペン・図形で描き始められる。
+       [方式] generateBlankSheet() が canvas に白地＋方眼（細線10mm/太線50mm）＋外枠を描いて
+       dataURL(PNG)化。これを取り込み図面と同じ sheetSrc に載せるだけなので、表示・ピン・朱書き・
+       図形・図面ごとの座標系(sheetW/sheetH)は既存経路をそのまま流用（新たな描画分岐なし）。
+       長辺は BLANK_LONG_PX=1600 に固定し座標系正規化(sheetUnits)と同値でファイルを軽く保つ。
+       [仕様] 縮尺は未設定（取り込みと同じ運用）。図面リストのチップは blank:true のとき「白紙」表示。
+       図面名はサイズ変更に追従して「白紙 A4横」等を自動補完（手入力後は上書きしない）。
+       ダイアログは取り込みダイアログと同じ cal-scrim/cal-box 系を流用し、分類は既存＋新規に対応。
+       [iOS配慮] .new-dwg-btn svg に pointer-events:none を付与（新規・白紙 両ボタンでSVGタップ
+       吸われを予防）。ダイアログ内はレイアウトを同一タップ内で変えない構造。
+-->
+
+<!--
+  build v7.27 (作図中は移動を2本指に固定・誤動作防止)  — ペン・図形・計測ツールを選択中（かつ編集可）は、
+       1本指では画面を移動しない＝描画専用にし、画面の移動（パン・ズーム）は必ず2本指に統一。
+       従来も紙面の上では 1本指＝描画/2本指＝移動 だったが、紙面の外（余白）を1本指でなぞると
+       パンしてしまう余地が残っていた。pointerdown で作図ツール中は panLock=true とし、pointermove の
+       1本指パン処理を抑止（2本指のピンチ/パン updateGesture は別経路なので従来どおり有効）。
+       ツールが nav（移動）または編集ロック中（旧版/オフライン未保存/現場役割以外）のときは panLock=false の
+       ままなので、これまでどおり1本指で自由に移動できる。ピンツールは対象外（従来どおり）。
+-->
+
+<!--
+  build v7.28 (誤動作防止4点：パームリジェクション/微ズーム抑制/図形の誤移動防止/ピンも2本指移動)  —
+       ① Apple Pencil 優先（パームリジェクション）：ペンシルが触れている間は指タッチを一切拾わない
+          （pointerType==='touch' && penDown() で早期return）。ペンが下りたら既存の指タッチを破棄して
+          ペンを最優先化。さらにセッション中に一度でもペンシルを使うと(penSeen)、以降は指＝移動/ズーム専用
+          （指では描画・ピン設置しない）。ペンシル未使用のセッションでは従来どおり指で描ける。
+          pointers マップの値に type を保持（pointermove でも維持）して判定。
+       ② 2本指移動の微ズーム抑制（デッドゾーン）：updateGesture で指間距離の変化が±8%以内なら拡大縮小せず
+          「移動だけ」に。しきい値超えで連続的にズーム開始（境界で段差なし）。ちょっとした指の開きで
+          勝手に拡大縮小するのを防止。
+       ③ 置いた図形の誤移動防止（しきい値）：図形をタップして選択した瞬間に指が数pxブレても、5px超えるまで
+          移動を開始しない（move用 dragMode に sx/sy/armed を追加）。タップ＝選択のみ、で図形がずれない。
+       ④ ピンも移動から分離：ピンツール選択中も1本指では移動しない（panLock に pinPlacing を追加）。ピンは
+          意図的なタップでのみ設置、移動は2本指。ペンシル使用時は指で移動でき、ピン設置はペンシルのタップで。
+       いずれも2本指のピンチ/パン(updateGesture)は別経路なので従来どおり有効。
+-->
+
+<!--
+  build v7.29 (誤動作防止4点：自動保存＋離脱ガード／アンドゥ拡張／破壊的操作の確認／閲覧ロック)  —
+       A. 自動保存＋離脱ガード：作業（drawings/pins/strokes/写真注釈/台帳/撮影計画/各seq）を IndexedDB へ
+          随時退避（5秒ごと＋ページ離脱・バックグラウンド化の瞬間 pagehide/visibilitychange）。起動時に
+          自動復元し「前回の作業を復元しました」を表示。stateSig() で変化があるときだけ書き込み。
+          離脱ガード（beforeunload）は「Googleドライブ未保存の変更がある」ときのみ確認を出す（端末には
+          自動保存されるためローカルの喪失は起きない前提。iOSは pagehide 保存が主防御）。
+          容量超過・非対応環境は握りつぶし、最終保存先はGoogleドライブのまま。
+       B. アンドゥ拡張：従来「追加のみ」だったアンドゥを、strokes配列のスナップショット履歴(inkHist/inkRedo)に
+          刷新。追加・移動・リサイズ・削除（消しゴム/選択削除）・全消去をすべて1操作単位で戻せる。
+          beginInkTxn()（pointerdown/操作開始で変更前を記録）→ commitInkTxn()（endPointer/finishPoly/
+          各ボタンで確定、無変化なら履歴に残さない）。2本指切替や校正ドラッグは cancelInkTxn() で除外。
+          旧 redoStrokes は不使用に（読み取り側は撤去）。
+       C. 破壊的操作に確認：汎用確認ダイアログ gConfirm() を新設し、ピン削除・写真削除・バージョン公開に
+          確認をはさむ（.confirm-box を流用）。
+       D. 閲覧ロック（見るだけモード）：トップバーに施錠ボタン。ONで editBlockReason() が全編集を弾き、
+          ツールをロック表示、navに固定、サブバーに「閲覧ロック中」バッジ。現場で見るだけの時にマークが
+          入らない。ロック中も1本指で自由に移動・ズームできる（描かない）。
+-->
+
+<!--
+  build v7.30 (図形は輪郭に触れて移動・内側は重ねて描ける)  — 四角・円の当たり判定を「内側全体」から
+       「輪郭（線）の近く（±14相当）」だけに変更。図形の内側は素通しになり、四角/円の中に別の図面・
+       ペン・図形を重ねて描けるようになった。移動・選択は輪郭に触れて行う（直線・矢印・連続線は元々線基準
+       なので変更なし）。塗りつぶしの有無に関わらず内側は素通し。pointInShapeBody() は図面・写真注釈で
+       共有のため、写真注釈側の図形も同じ挙動になる。四角は4辺、円は周を48分割した多角形近似で最短距離判定。
+       選択枠・角ハンドル・リサイズ・アンドゥ等は従来どおり（本体の当たり判定のみの変更）。
+-->
+
+<!--
+  build v7.31 (図面取り込み時に向きを変えられる)  — 取り込みダイアログのプレビュー下に「左90°／右90°」
+       ボタンを追加。押すたびに90°ずつ回転し、プレビューと座標系サイズ（縦横入替）に即反映。
+       [方式] 原本（origSrc/origW/origH）と累積角(rot)を保持し、回転のたびに rotateDataUrl() が原本から
+       canvas で回した dataURL を生成（累積劣化を防ぐ）。90/270°では縦横を入れ替え。JPEG由来（PDF取り込み）は
+       JPEGのまま、その他はPNGで出力。0°に戻したときは原本をそのまま使用。
+       確定(commitImport)は回転後の src/w/h をそのまま sheetSrc/sheetW/sheetH に使うため、以降の表示・
+       ピン・朱書き・座標系は既存経路のまま。回転ボタンは読み込み完了まで無効。
+-->
+
+<!--
+  build v7.32 (図形パネルと色パネルを左右に縦置き)  — ツールパネルの既定配置を変更。
+       図形パネルを画面左端、色（スタイル）パネルを右端に配置し、左右いずれも縦一列表示に。
+       state.panelPos の初期値を {shape:'center',style:'center'} → {shape:'left',style:'right'} に変更。
+       レイアウトは既存の layoutPanels（左右端は vertical クラス＋画面上端〜ドック上端の中央に縦配置）を
+       そのまま利用。ハンドルをドラッグして中央や反対側へ移動できるのは従来どおり。
+-->
+
+<!--
+  build v7.33 (安定化：自動保存の堅牢化・エラーハンドラ・常設テスト)  —
+       ② グローバルエラーハンドラ：window の error / unhandledrejection を拾い、例外時にまず autosaveNow(true)
+          で作業を退避し、5秒に1回まで控えめにトースト通知。1箇所の例外でUI全体が無反応化するのを防ぐ。
+       ③ 保存ストアのマニフェスト化：drawings/pins/strokes/ledger*/photoInk と各seqを SAVE_STORES/SAVE_SEQS の
+          get/set 一覧で管理。snapshot/復元がこの一覧駆動になり、新ストア追加時の「保存し忘れ」を構造的に防止。
+       ④ 画像のハッシュ別保存：写真・取り込み/白紙のsheetSrc など dataURL は IndexedDB に img:ハッシュ で
+          個別保存し、セッションJSONには参照 {__img:hash} だけ持つ。同一画像は一度だけ書き込み（fnv1aHash）。
+          変更検知(stateSig)も画像実体を length に潰して軽量化。復元は参照→実体に解決。旧v1形式（dataURL文字列）は
+          そのまま素通しで後方互換。※古い画像実体のGC（未参照の掃除）は将来課題。
+       ① 常設テスト：リポジトリに lint.js（ブラウザ不要の静的チェック：重複ID/重複関数定義/ビルドタグと
+          changelogの整合/JS構文）と playwright_smoke.py（起動エラー0・白紙作成・描画でUndo活性・閲覧ロック・
+          自動保存復元）を追加。変更後・リリース前に回す運用を想定（回転の二重実装やタグのズレを事前に検知）。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -475,6 +579,9 @@
   .role-seg button .d{width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.5}
   .role-seg button.active{background:var(--panel3);color:var(--text)}
   .role-seg button.active .d{opacity:1}
+  .lock-btn.locked-on{background:#F5A524;color:#0E1218;border-color:#F5A524}
+  .lock-btn.locked-on svg{color:#0E1218}
+  .lock-pill{font-size:11px;font-weight:700;color:#0E1218;background:#F5A524;border-radius:6px;padding:2px 8px;white-space:nowrap;flex-shrink:0}
   .role-field.active{color:#7FE3C0} .role-drafter.active{color:#FBCF6E} .role-admin.active{color:#9DC2FF}
 
   .net-btn.online{color:var(--signal)} .net-btn.offline{color:var(--warn)}
@@ -621,7 +728,7 @@
   .dh-actions{display:flex;align-items:center;gap:8px}
   .new-dwg-btn{display:flex;align-items:center;gap:6px;height:44px;padding:0 13px;border-radius:11px;
     background:var(--panel2);border:1px solid var(--line2);color:var(--text);font-size:13.5px;font-weight:600}
-  .new-dwg-btn svg{width:16px;height:16px;color:var(--signal)}
+  .new-dwg-btn svg{width:16px;height:16px;color:var(--signal);pointer-events:none}
   .new-dwg-btn:active{background:var(--panel3);transform:scale(.96)}
   .dwg .imported-chip{font-family:var(--mono);font-size:10.5px;color:var(--muted2);
     border:1px solid var(--line2);border-radius:5px;padding:1px 5px}
@@ -1032,6 +1139,12 @@
   .imp-actions button:active{transform:scale(.98)}
   .imp-actions button[disabled]{opacity:.45;pointer-events:none}
   .imp-meta{font-size:11.5px;color:var(--muted2);font-family:var(--mono);margin:-8px 0 12px;text-align:center}
+  .imp-rotate{display:flex;gap:8px;justify-content:center;margin:0 0 14px}
+  .imp-rot-btn{display:flex;align-items:center;gap:6px;height:38px;padding:0 14px;border-radius:10px;
+    background:var(--panel2);border:1px solid var(--line2);color:var(--text);font-size:13px;font-weight:600}
+  .imp-rot-btn svg{width:16px;height:16px;color:var(--signal);pointer-events:none}
+  .imp-rot-btn:active{background:var(--panel3);transform:scale(.97)}
+  .imp-rot-btn[disabled]{opacity:.4;pointer-events:none}
 
   /* ===== clear-all confirm dialog ===== */
   .confirm-scrim{position:fixed;inset:0;background:rgba(6,9,13,.62);backdrop-filter:blur(3px);
@@ -1244,6 +1357,9 @@
     <svg id="netIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0114 0M8.5 16.1a6 6 0 017 0M12 20h.01M2 8.82a15 15 0 0120 0"/></svg>
     <span class="netlbl" id="netStatus">接続</span>
   </button>
+  <button class="icon-btn lock-btn" id="btnLock" title="閲覧ロック（見るだけモード）">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+  </button>
   <button class="icon-btn" id="openInfo">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
   </button>
@@ -1252,9 +1368,10 @@
 <!-- SUB HEADER: drawing identity (own row, no horizontal collision) -->
 <div class="subbar">
   <span id="statusPill"></span>
+  <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.25 · GAS経由のDrive保存に移行</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.33 · 安定化（自動保存堅牢化・エラーハンドラ・常設テスト）</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -1413,6 +1530,10 @@
       <button class="new-dwg-btn" id="btnNewDwg" title="図面ファイルを取り込む">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         新規
+      </button>
+      <button class="new-dwg-btn" id="btnBlankDwg" title="白紙から作図する">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></svg>
+        白紙
       </button>
       <button class="close-x" data-close="drawerSheets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
@@ -1618,6 +1739,16 @@
     <p class="cal-desc" id="impDesc">読み込んだ図面を v1.0（最新）として追加します。</p>
     <div class="imp-preview" id="impPreview"><span class="ph">読み込み中…</span></div>
     <div class="imp-meta" id="impMeta"></div>
+    <div class="imp-rotate">
+      <button class="imp-rot-btn" id="impRotL" type="button" disabled title="左に90°回転">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        左90°
+      </button>
+      <button class="imp-rot-btn" id="impRotR" type="button" disabled title="右に90°回転">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        右90°
+      </button>
+    </div>
     <div class="cal-fields">
       <div class="cal-field">
         <label class="cal-lbl" for="impName">図面名</label>
@@ -1643,6 +1774,48 @@
   </div>
 </div>
 
+<!-- 白紙作成ダイアログ -->
+<div class="cal-scrim" id="blkScrim">
+  <div class="cal-box">
+    <div class="cal-head">
+      <h3>白紙から作図</h3>
+      <button class="close-x" id="blkClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <p class="cal-desc">方眼つきの白紙を v1.0（最新）として追加します。縮尺は未設定です。</p>
+    <div class="imp-preview" id="blkPreview"><span class="ph">…</span></div>
+    <div class="imp-meta" id="blkMeta"></div>
+    <div class="cal-fields">
+      <div class="cal-field">
+        <label class="cal-lbl" for="blkSize">用紙サイズ</label>
+        <div class="cal-field-in" style="flex:0 0 210px;display:flex;gap:8px">
+          <select id="blkSize" class="cal-unit" style="flex:1;height:40px"><option value="A4">A4</option><option value="A3">A3</option></select>
+          <select id="blkOrient" class="cal-unit" style="flex:1;height:40px"><option value="land">横</option><option value="port">縦</option></select>
+        </div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="blkName">図面名</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><input type="text" id="blkName" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off"></div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="blkGroup">分類</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><select id="blkGroup" class="cal-unit" style="flex:1;height:40px"></select></div>
+      </div>
+      <div class="cal-field" id="blkGroupNewRow" style="display:none">
+        <label class="cal-lbl" for="blkGroupNew">新しい分類名</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><input type="text" id="blkGroupNew" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off" placeholder="例：屋上"></div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="blkFloor">階数</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><input type="text" id="blkFloor" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off" placeholder="例：3F"></div>
+      </div>
+    </div>
+    <div class="cal-actions imp-actions">
+      <button class="btn-cancel" id="blkCancel">キャンセル</button>
+      <button class="btn-primary" id="blkAdd">v1.0 として追加</button>
+    </div>
+  </div>
+</div>
+
 <!-- clear-all confirm dialog -->
 <div class="confirm-scrim" id="clearScrim">
   <div class="confirm-box">
@@ -1654,6 +1827,21 @@
     <div class="confirm-actions">
       <button class="btn-cancel" id="clearCancel">キャンセル</button>
       <button class="btn-danger" id="clearConfirm">すべて消去</button>
+    </div>
+  </div>
+</div>
+
+<!-- 汎用確認ダイアログ（削除・公開などに使用） -->
+<div class="confirm-scrim" id="gConfirmScrim">
+  <div class="confirm-box">
+    <div class="confirm-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+    </div>
+    <h3 id="gcTitle">確認</h3>
+    <p class="confirm-desc" id="gcDesc"></p>
+    <div class="confirm-actions">
+      <button class="btn-cancel" id="gcCancel">キャンセル</button>
+      <button class="btn-primary" id="gcOk">OK</button>
     </div>
   </div>
 </div>
@@ -1828,9 +2016,9 @@ function sheetSVG(diff){
 /* ===== DATA ===== */
 // scale: the X structural grid spans 148 canvas units per bay, dimensioned 6,400 mm on the sheet.
 const DEFAULT_MM_PER_UNIT=6400/148; // ≈ 43.24 mm per canvas unit
-let state={role:'field',online:true,selectedId:null,viewingVer:null,tool:'nav',shapeType:'rect',shiftOn:false,
+let state={role:'field',online:true,selectedId:null,viewingVer:null,tool:'nav',viewLock:false,shapeType:'rect',shiftOn:false,
   inkColor:'#E5372A',inkWidth:3.5,inkDash:false,inkFill:false,
-  panelPos:{shape:'center',style:'center'},panelCollapsed:{shape:false,style:false},
+  panelPos:{shape:'left',style:'right'},panelCollapsed:{shape:false,style:false},
   activeTab:'ver',curPin:null};
 const drawings=[]; // v7.23：内蔵サンプル図面を全廃。ユーザーが「＋ 新規」から自分の図面を取り込む前提。
 let strokes={}; let redoStrokes={};
@@ -2090,14 +2278,28 @@ function eraseInkAt(pt){
     }
     if(hit){ arr.splice(i,1); changed=true; }
   }
-  if(changed){ redoStrokes[inkKey()]=[]; redrawInk(); }
+  if(changed){ redrawInk(); }
   return changed;
 }
 function pointInShapeBody(item,pt){
-  if(item.type==='rect'||item.type==='ellipse'){
-    const x0=Math.min(item.x1,item.x2)-8, x1=Math.max(item.x1,item.x2)+8;
-    const y0=Math.min(item.y1,item.y2)-8, y1=Math.max(item.y1,item.y2)+8;
-    return pt.x>=x0&&pt.x<=x1&&pt.y>=y0&&pt.y<=y1;
+  const tol=14; // 輪郭の当たり幅（直線・連続線と同じ感覚）
+  if(item.type==='rect'){
+    // 4辺のいずれかの近くだけを「掴める線」とする（内側は素通し＝重ねて描ける）
+    const x0=Math.min(item.x1,item.x2), x1=Math.max(item.x1,item.x2);
+    const y0=Math.min(item.y1,item.y2), y1=Math.max(item.y1,item.y2);
+    return distToSegment(pt,x0,y0,x1,y0)<tol || distToSegment(pt,x1,y0,x1,y1)<tol
+        || distToSegment(pt,x1,y1,x0,y1)<tol || distToSegment(pt,x0,y1,x0,y0)<tol;
+  }
+  if(item.type==='ellipse'){
+    const x0=Math.min(item.x1,item.x2), x1=Math.max(item.x1,item.x2);
+    const y0=Math.min(item.y1,item.y2), y1=Math.max(item.y1,item.y2);
+    const cx=(x0+x1)/2, cy=(y0+y1)/2, rx=(x1-x0)/2, ry=(y1-y0)/2;
+    if(rx<0.5||ry<0.5) return distToSegment(pt,item.x1,item.y1,item.x2,item.y2)<tol;
+    // 楕円周を多角形近似し、その線までの最短距離で判定（内側は素通し）
+    const N=48; let prev=null, best=Infinity;
+    for(let i=0;i<=N;i++){ const a=i/N*2*Math.PI, ex=cx+rx*Math.cos(a), ey=cy+ry*Math.sin(a);
+      if(prev) best=Math.min(best, distToSegment(pt,prev.x,prev.y,ex,ey)); prev={x:ex,y:ey}; }
+    return best<tol;
   }
   if(item.type==='poly'){
     for(let i=0;i<item.pts.length-1;i++){
@@ -2171,22 +2373,41 @@ function finishPoly(){
   }
   if(pts.length<2){ const arr=strokes[inkKey()]; if(arr&&arr[arr.length-1]===polyDraft)arr.pop(); }
   polyDraft=null; hoverPt=null; redrawInk();
+  commitInkTxn(); // B: 連続線1本をアンドゥ履歴に確定
 }
 
 function overSheet(cx,cy){const r=canvas.getBoundingClientRect();return cx>=r.left&&cx<=r.right&&cy>=r.top&&cy<=r.bottom;}
 function toCanvas(cx,cy){const r=canvas.getBoundingClientRect();return{x:(cx-r.left)/r.width*CW,y:(cy-r.top)/r.height*CH};}
 
 let downInfo=null;
+let panLock=false; // 作図ツール中は1本指で画面を動かさない（移動は必ず2本指）
+let penSeen=false; // このセッションで Apple Pencil を使ったか（使用後は指＝移動/ズーム専用）
+function penDown(){ for(const p of pointers.values()) if(p.type==='pen') return true; return false; }
 vp.addEventListener('pointerdown',e=>{
   if(e.target.closest('.dock,.hint-chip,.tool-panel,.pin,.measure-bar'))return;
+  // ① パームリジェクション：Apple Pencil が触れている間は指タッチを一切拾わない（手のひら・指の誤描画/誤移動を防止）
+  if(e.pointerType==='touch' && penDown()) return;
+  if(e.pointerType==='pen'){
+    penSeen=true;
+    // ペンが下りたら既存の指タッチ（手のひら等）を破棄し、ペンを最優先にする
+    if(pointers.size){
+      for(const id of [...pointers.keys()]){ try{vp.releasePointerCapture(id);}catch(_){}}
+      pointers.clear(); gesture=null; curItem=null; downInfo=null; polyPending=false; hoverPt=null;
+    }
+  }
   vp.setPointerCapture(e.pointerId);
-  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType});
   if(pointers.size===1) downInfo={x:e.clientX,y:e.clientY,moved:false};
-  const drawable=(state.tool==='pen'||state.tool==='shape'||state.tool==='measure') && canPinEdit();
+  // 指で描ける/ピンを刺せるのは「ペンシル未使用のセッション」のみ。ペンシル使用後は指＝移動/ズーム専用。
+  const inputCanDraw = e.pointerType!=='touch' || !penSeen;
+  const drawable=(state.tool==='pen'||state.tool==='shape'||state.tool==='measure') && canPinEdit() && inputCanDraw;
+  const pinPlacing = state.tool==='pin' && canPinEdit() && inputCanDraw; // ④ ピン設置中も1本指移動を無効化
+  if(pointers.size===1) panLock = drawable || pinPlacing; // 作図/ピン中の1本指は移動しない（余白でも）
   const isPoly=state.tool==='shape' && state.shapeType==='poly';
   if(pointers.size===1 && polyDraft && !overSheet(e.clientX,e.clientY)){
     finishPoly(); polyPending=false; downInfo=null; return; // touching outside the drawing ends the line
   }
+  if(pointers.size===1 && drawable && overSheet(e.clientX,e.clientY)) beginInkTxn(); // B: 変更前の状態を記録（追加/移動/リサイズ/消去のアンドゥ用）
   if(pointers.size===1 && drawable && state.tool==='shape' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
     const snapshot=item=>item.type==='poly'?{pts:item.pts.map(q=>({x:q.x,y:q.y}))}:{x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2};
@@ -2196,7 +2417,7 @@ vp.addEventListener('pointerdown',e=>{
       const h=hitHandle(selectedItem,pt,tol);
       if(h){ dragMode={mode:'resize',item:selectedItem,handle:h}; handled=true; }
       else if(pointInShapeBody(selectedItem,pt)){
-        dragMode={mode:'move',item:selectedItem,startPt:pt,orig:snapshot(selectedItem)};
+        dragMode={mode:'move',item:selectedItem,startPt:pt,orig:snapshot(selectedItem),sx:e.clientX,sy:e.clientY,armed:false};
         handled=true;
       }
     }
@@ -2204,7 +2425,7 @@ vp.addEventListener('pointerdown',e=>{
       const hit=hitTestShape(pt);
       if(hit){
         selectedItem=hit;
-        dragMode={mode:'move',item:hit,startPt:pt,orig:snapshot(hit)};
+        dragMode={mode:'move',item:hit,startPt:pt,orig:snapshot(hit),sx:e.clientX,sy:e.clientY,armed:false};
         handled=true;
       }
     }
@@ -2237,6 +2458,7 @@ vp.addEventListener('pointerdown',e=>{
     if(curItem){ // abort in-progress item, switch to gesture
       const arr=strokes[inkKey()]; if(arr&&arr[arr.length-1]===curItem)arr.pop(); curItem=null; redrawInk();
     }
+    cancelInkTxn(); // B: 中断した描画は履歴に残さない
     dragMode=null; polyPending=false; hoverPt=null;
     downInfo=null; startGesture();
   } else {
@@ -2246,13 +2468,18 @@ vp.addEventListener('pointerdown',e=>{
 
 vp.addEventListener('pointermove',e=>{
   if(!pointers.has(e.pointerId))return;
-  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType});
   if(pointers.size>=2){ updateGesture(); return; }
   // ペン消しゴム：なぞっている間、触れた free 線を消す
   if(penErasing){ eraseInkAt(toCanvas(e.clientX,e.clientY)); return; }
   if(dragMode){
     const pt=toCanvas(e.clientX,e.clientY), item=dragMode.item;
     if(dragMode.mode==='move'){
+      // ③ 誤移動防止：選択直後の微ブレでは動かさず、しきい値(5px)を超えてから移動開始
+      if(!dragMode.armed){
+        if(Math.abs(e.clientX-dragMode.sx)<5 && Math.abs(e.clientY-dragMode.sy)<5) return;
+        dragMode.armed=true;
+      }
       const dx=pt.x-dragMode.startPt.x, dy=pt.y-dragMode.startPt.y;
       if(item.type==='poly'){
         item.pts.forEach((q,i)=>{ q.x=dragMode.orig.pts[i].x+dx; q.y=dragMode.orig.pts[i].y+dy; });
@@ -2300,6 +2527,7 @@ vp.addEventListener('pointermove',e=>{
   }
   if(downInfo && (Math.abs(e.clientX-downInfo.x)>6||Math.abs(e.clientY-downInfo.y)>6)) downInfo.moved=true;
   if(polyPending){ updatePolyHover(e.clientX,e.clientY); return; } // finger down: rubber-band follows the touch
+  if(panLock) return; // 作図ツール中：1本指では移動しない（移動は2本指のみ）
   // single-finger pan
   if(gesture&&gesture.single){
     view.x+=e.clientX-gesture.lx; view.y+=e.clientY-gesture.ly; gesture.lx=e.clientX; gesture.ly=e.clientY; applyView();
@@ -2329,7 +2557,8 @@ function endPointer(e){
       const distU=Math.hypot(curItem.x2-curItem.x1, curItem.y2-curItem.y1);
       const arr=strokes[inkKey()]; if(arr&&arr[arr.length-1]===curItem)arr.pop();
       curItem=null; redrawInk(); calCapture(distU);
-      polyPending=false; if(pointers.size===0){gesture=null;downInfo=null;}
+      cancelInkTxn(); // 校正のドラッグは履歴に残さない
+      polyPending=false; if(pointers.size===0){gesture=null;downInfo=null;panLock=false;}
       return;
     }
     curItem=null; redrawInk();
@@ -2347,7 +2576,8 @@ function endPointer(e){
     addPolyPoint(toCanvas(e.clientX,e.clientY));
   }
   polyPending=false;
-  if(pointers.size===0){gesture=null;downInfo=null;}
+  if(pointers.size===0 && !polyDraft) commitInkTxn(); // B: 1操作分をアンドゥ履歴に確定
+  if(pointers.size===0){gesture=null;downInfo=null;panLock=false;}
 }
 vp.addEventListener('pointerup',endPointer);
 vp.addEventListener('pointercancel',endPointer);
@@ -2381,7 +2611,11 @@ function updateGesture(){
   const pts=[...pointers.values()];
   const dist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
   const mid={x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2};
-  const ns=Math.min(4,Math.max(0.4,gesture.sv.scale*(dist/gesture.startDist)));
+  // ② 微ズーム抑制：指間距離の変化が小さいうちは拡大縮小せず「移動だけ」にする（デッドゾーン±8%）
+  const DZ=0.08;
+  let raw=dist/gesture.startDist, rr;
+  if(raw>1+DZ) rr=raw-DZ; else if(raw<1-DZ) rr=raw+DZ; else rr=1;
+  const ns=Math.min(4,Math.max(0.4,gesture.sv.scale*rr));
   const cpx=(gesture.startMid.x-r.left-gesture.sv.x)/gesture.sv.scale;
   const cpy=(gesture.startMid.y-r.top-gesture.sv.y)/gesture.sv.scale;
   view.scale=ns;
@@ -2392,9 +2626,11 @@ function updateGesture(){
 
 /* ===== ink ===== */
 function refreshInkBtns(){
-  const has=(strokes[inkKey()]||[]).length>0;
-  const hasRedo=(redoStrokes[inkKey()]||[]).length>0;
-  $('#btnUndo').disabled=!has; $('#btnClear').disabled=!has; $('#btnRedo').disabled=!hasRedo;
+  const k=inkKey();
+  const hasInk=(strokes[k]||[]).length>0;
+  $('#btnUndo').disabled=!((inkHist[k]||[]).length>0);
+  $('#btnRedo').disabled=!((inkRedo[k]||[]).length>0);
+  $('#btnClear').disabled=!hasInk;
   // 消しゴム：ペンモードでは「なぞり消去」のトグルとして常に使える。
   // 図形モードでは従来どおり「選択中の図形を削除」（選択時のみ有効）。
   const canEdit=!editBlockReason();
@@ -2600,24 +2836,14 @@ $('#btnPin').addEventListener('click',()=>{
 $('#btnMeasure').addEventListener('click',()=>{
   const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('measure');
 });
-$('#btnUndo').addEventListener('click',()=>{
-  if(polyDraft) finishPoly(); // 進行中の連続線を先に確定（宙浮き防止）
-  const a=strokes[inkKey()];if(a&&a.length){
-    (redoStrokes[inkKey()]=redoStrokes[inkKey()]||[]).push(a.pop());
-    redrawInk();
-  }
-});
-$('#btnRedo').addEventListener('click',()=>{
-  if(polyDraft) finishPoly(); // 進行中の連続線を先に確定
-  const r=redoStrokes[inkKey()];if(r&&r.length){
-    (strokes[inkKey()]=strokes[inkKey()]||[]).push(r.pop());
-    redrawInk();
-  }
-});
+$('#btnUndo').addEventListener('click',()=>{ undoInk(); });
+$('#btnRedo').addEventListener('click',()=>{ redoInk(); });
 // 全消去は破壊的操作なので、必ず確認ダイアログを挟む
 function doClearAll(){
-  strokes[inkKey()]=[];redoStrokes[inkKey()]=[];polyDraft=null;polyPending=false;hoverPt=null;
+  beginInkTxn();
+  strokes[inkKey()]=[];polyDraft=null;polyPending=false;hoverPt=null;
   deselectShape();redrawInk();
+  commitInkTxn(); // B: 全消去もアンドゥで戻せる
 }
 function openClearConfirm(){
   const n=(strokes[inkKey()]||[]).length;
@@ -2641,11 +2867,13 @@ $('#btnErase').addEventListener('click',()=>{
   }
   // 図形モード：選択中の図形を削除（従来動作）
   if(!selectedItem)return;
+  beginInkTxn();
   const arr=strokes[inkKey()]||[];
   const idx=arr.indexOf(selectedItem);
   if(idx>-1) arr.splice(idx,1);
   deselectShape();
   redrawInk();
+  commitInkTxn(); // B: 削除もアンドゥで戻せる
 });
 
 /* ===== 写真台帳（photo ledger）===== */
@@ -3218,6 +3446,7 @@ async function saveToGas(){
     const result=await r.json();
     if(!result || result.ok!==true) throw new Error((result&&result.error)||'unknown error');
     lsSet('gasLastSaved', new Date().toISOString());
+    driveSavedSig=stateSig(); // 離脱ガード：この時点の状態を「Drive保存済み」とみなす
     renderGasBox();
     toast(`Googleドライブへ保存しました（写真${payload.photos.length}枚）`,'ok');
   }catch(e){
@@ -3895,6 +4124,7 @@ function renderPins(){
 function editBlockReason(){
   const d=dwg(), v=viewingVerObj();
   if(!d) return '図面が選択されていません。左上の図面リストから開くか、「＋ 新規」で取り込んでください。';
+  if(state.viewLock) return '閲覧ロック中です。編集するには右上のロックを解除してください。';
   if(state.role!=='field') return `現在の役割（作図担当）ではペン・図形・ピンを追加できません。現場役割に切り替えてください。`;
   if(!state.online && !d.cached) return 'オフラインのため、この図面は端末に保存されていません。ペン・図形・ピンを追加できません。';
   if(v.status==='superseded') return '旧版のためペン・図形・ピンを追加できません。最新版をご覧ください。';
@@ -4014,8 +4244,11 @@ $('#pinAppearToggle').addEventListener('click',()=>{ pinAppearOpen=!pinAppearOpe
 $('#pinClose').addEventListener('click',closePin);
 $('#pinTitle').addEventListener('input',e=>{const p=curPinObj();if(p)p.title=e.target.value;});
 $('#pinNote').addEventListener('input',e=>{const p=curPinObj();if(p)p.note=e.target.value;});
-$('#pinDelete').addEventListener('click',()=>{
+$('#pinDelete').addEventListener('click',async ()=>{
   const p=curPinObj();if(!p)return;
+  const nph=(p.photos||[]).length;
+  const ok=await gConfirm({title:'ピンを削除しますか？',desc:`このピン${nph?`（写真${nph}枚を含む）`:''}を削除します。<br>この操作は元に戻せません。`,ok:'削除',danger:true});
+  if(!ok) return;
   pins[state.selectedId]=pinList().filter(x=>x.id!==p.id);
   if(ledgerPlan[state.selectedId]) delete ledgerPlan[state.selectedId][p.id]; // 撮影計画も一緒に破棄
   toast('ピンを削除しました','warn');closePin();
@@ -4142,8 +4375,10 @@ function renderPhotoGrid(){
   });
   g.innerHTML=html;
   g.querySelectorAll('img').forEach(im=>im.addEventListener('click',()=>openLightbox(im.src)));
-  g.querySelectorAll('.rm').forEach(b=>b.addEventListener('click',e=>{
+  g.querySelectorAll('.rm').forEach(b=>b.addEventListener('click',async e=>{
     e.stopPropagation();
+    const ok=await gConfirm({title:'写真を削除しますか？',desc:'この写真を台帳から削除します。<br>撮影枠は残り「未撮影」に戻ります。',ok:'削除',danger:true});
+    if(!ok) return;
     const sl=slotForSrc(state.selectedId,p.id,p.photos[+b.dataset.rm]);
     const label=slotLabel(sl);
     const [gone]=p.photos.splice(+b.dataset.rm,1);
@@ -4251,6 +4486,7 @@ function openImportDialog(){
   $('#impPreview').innerHTML='<span class="ph">読み込み中…</span>';
   $('#impMeta').textContent='';
   $('#impAdd').disabled=true;
+  $('#impRotL').disabled=true; $('#impRotR').disabled=true;
   $('#impGroupNewRow').style.display='none';
   const groups=[...new Set(drawings.map(d=>d.group))];
   $('#impGroup').innerHTML=groups.map(g=>`<option value="${g}">${g}</option>`).join('')+'<option value="__new">＋ 新しい分類…</option>';
@@ -4278,15 +4514,59 @@ async function handleImportFile(file){
       if(!sz||!sz.w||!sz.h) throw new Error('size unknown');
       info={src,w:sz.w,h:sz.h,pages:1};
     }
+    info.origSrc=info.src; info.origW=info.w; info.origH=info.h; info.rot=0;
     pendingImport=info;
-    $('#impPreview').innerHTML=`<img src="${info.src}" alt="プレビュー">`;
-    const u=sheetUnits(info.w,info.h);
-    $('#impMeta').textContent=`${info.w}×${info.h}px → 座標系 ${u.w}×${u.h}`+(info.pages>1?`　/　全${info.pages}ページ中1ページ目`:'');
-    $('#impAdd').disabled=false;
+    renderImportPreview();
     if(info.pages>1) toast(`PDFは1ページ目のみ取り込みます（全${info.pages}ページ）`,'warn');
   }catch(e){
     $('#impPreview').innerHTML='<span class="ph">読み込めませんでした。<br>PDFはオンライン時のみ、画像はPNG/JPEG/SVGに対応しています。</span>';
     toast('図面を読み込めませんでした','warn');
+  }
+}
+// 取り込みプレビューの再描画（回転後の src/w/h を反映）
+function renderImportPreview(){
+  if(!pendingImport) return;
+  const info=pendingImport;
+  $('#impPreview').innerHTML=`<img src="${info.src}" alt="プレビュー">`;
+  const u=sheetUnits(info.w,info.h);
+  const rotTxt = info.rot ? `　/　${info.rot}°回転` : '';
+  $('#impMeta').textContent=`${info.w}×${info.h}px → 座標系 ${u.w}×${u.h}`+(info.pages>1?`　/　全${info.pages}ページ中1ページ目`:'')+rotTxt;
+  $('#impAdd').disabled=false; $('#impRotL').disabled=false; $('#impRotR').disabled=false;
+}
+// 画像を deg（90/180/270）回転した dataURL を作る。90/270 は縦横が入れ替わる。
+function rotateDataUrl(src, deg){
+  return new Promise((res,rej)=>{
+    const im=new Image();
+    im.onload=()=>{
+      const w=im.naturalWidth||im.width, h=im.naturalHeight||im.height;
+      const swap=(deg===90||deg===270);
+      const cw=swap?h:w, ch=swap?w:h;
+      const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+      const c=cv.getContext('2d');
+      c.translate(cw/2,ch/2); c.rotate(deg*Math.PI/180); c.drawImage(im,-w/2,-h/2);
+      const mime = /^data:image\/jpeg/i.test(src) ? 'image/jpeg' : 'image/png';
+      res({src:cv.toDataURL(mime, 0.9), w:cw, h:ch});
+    };
+    im.onerror=()=>rej(new Error('rotate failed'));
+    im.src=src;
+  });
+}
+// 左右90°回転（累積劣化を避けるため常に原本 origSrc から生成）
+async function rotateImport(delta){
+  if(!pendingImport) return;
+  $('#impRotL').disabled=true; $('#impRotR').disabled=true; $('#impAdd').disabled=true;
+  pendingImport.rot=((pendingImport.rot+delta)%360+360)%360;
+  try{
+    if(pendingImport.rot===0){
+      pendingImport.src=pendingImport.origSrc; pendingImport.w=pendingImport.origW; pendingImport.h=pendingImport.origH;
+    } else {
+      const r=await rotateDataUrl(pendingImport.origSrc, pendingImport.rot);
+      pendingImport.src=r.src; pendingImport.w=r.w; pendingImport.h=r.h;
+    }
+    renderImportPreview();
+  }catch(e){
+    toast('回転に失敗しました','warn');
+    $('#impRotL').disabled=false; $('#impRotR').disabled=false; $('#impAdd').disabled=false;
   }
 }
 function commitImport(){
@@ -4319,8 +4599,90 @@ $('#impGroup').addEventListener('change',e=>{
 });
 $('#impClose').addEventListener('click',closeImportDialog);
 $('#impCancel').addEventListener('click',closeImportDialog);
+$('#impRotL').addEventListener('click',()=>rotateImport(-90));
+$('#impRotR').addEventListener('click',()=>rotateImport(90));
 $('#impAdd').addEventListener('click',commitImport);
 $('#impScrim').addEventListener('click',e=>{ if(e.target.id==='impScrim') closeImportDialog(); });
+
+/* ===== 白紙から作図（方眼つき）=====
+   A4/A3 × 縦横。白地に方眼(10mm細線/50mm太線)＋外枠を canvas で描いて sheetSrc(dataURL)化。
+   以降は取り込み図面とまったく同じ経路（sheetSrc の img 表示・図面ごとの sheetW/sheetH）に乗る。
+   縮尺は未設定（DEFAULT_MM_PER_UNIT のまま／校正するまで計測は目安）。 */
+const A_SIZES_MM={A4:{long:297,short:210}, A3:{long:420,short:297}};
+const BLANK_LONG_PX=1600; // 長辺の描画解像度（座標系正規化と同値でファイルを軽く保つ）
+function blankDimsMM(size,orient){
+  const s=A_SIZES_MM[size]||A_SIZES_MM.A4;
+  return orient==='port' ? {w:s.short,h:s.long} : {w:s.long,h:s.short};
+}
+function blankSizeLabel(size,orient){ return `${size}${orient==='port'?'縦':'横'}`; }
+function generateBlankSheet(size,orient){
+  const mm=blankDimsMM(size,orient);
+  const pxPerMm=BLANK_LONG_PX/Math.max(mm.w,mm.h);
+  const W=Math.round(mm.w*pxPerMm), H=Math.round(mm.h*pxPerMm);
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const c=cv.getContext('2d');
+  c.fillStyle='#FFFFFF'; c.fillRect(0,0,W,H);
+  const drawGrid=(stepMM,color,lw)=>{
+    const step=stepMM*pxPerMm; c.lineWidth=lw; c.strokeStyle=color;
+    for(let x=step; x<W; x+=step){ const px=Math.round(x)+0.5; c.beginPath(); c.moveTo(px,0); c.lineTo(px,H); c.stroke(); }
+    for(let y=step; y<H; y+=step){ const py=Math.round(y)+0.5; c.beginPath(); c.moveTo(0,py); c.lineTo(W,py); c.stroke(); }
+  };
+  drawGrid(10,'#E4E8ED',1);   // 細線 10mm
+  drawGrid(50,'#C6CDD6',1.4); // 太線 50mm
+  c.lineWidth=2; c.strokeStyle='#AEB6C0'; c.strokeRect(1,1,W-2,H-2); // 外枠
+  return {src:cv.toDataURL('image/png'), w:W, h:H};
+}
+let blkLastAutoName='';
+function currentBlank(){ return generateBlankSheet($('#blkSize').value,$('#blkOrient').value); }
+function updateBlankPreview(){
+  const size=$('#blkSize').value, orient=$('#blkOrient').value;
+  const b=generateBlankSheet(size,orient);
+  $('#blkPreview').innerHTML=`<img src="${b.src}" alt="プレビュー">`;
+  const u=sheetUnits(b.w,b.h);
+  $('#blkMeta').textContent=`${blankSizeLabel(size,orient)} · 方眼10mm · 座標系 ${u.w}×${u.h}`;
+  // 図面名がまだ自動値のままなら、サイズ変更に追従して更新
+  const auto='白紙 '+blankSizeLabel(size,orient);
+  if(!$('#blkName').value || $('#blkName').value===blkLastAutoName){ $('#blkName').value=auto; }
+  blkLastAutoName=auto;
+}
+function openBlankDialog(){
+  const groups=[...new Set(drawings.map(d=>d.group))];
+  $('#blkGroup').innerHTML=groups.map(g=>`<option value="${g}">${g}</option>`).join('')+'<option value="__new">＋ 新しい分類…</option>';
+  $('#blkGroupNewRow').style.display='none';
+  $('#blkGroupNew').value='';
+  $('#blkSize').value='A4'; $('#blkOrient').value='land';
+  $('#blkFloor').value='';
+  blkLastAutoName=''; $('#blkName').value='';
+  updateBlankPreview();
+  $('#blkScrim').classList.add('show');
+}
+function closeBlankDialog(){ $('#blkScrim').classList.remove('show'); }
+function commitBlank(){
+  const b=currentBlank();
+  const name=($('#blkName').value||'').trim()||'白紙図面';
+  let group=$('#blkGroup').value;
+  if(group==='__new') group=($('#blkGroupNew').value||'').trim()||'その他';
+  const floor=($('#blkFloor').value||'').trim()||'—';
+  const u=sheetUnits(b.w,b.h);
+  const id='u'+(++dwgSeq);
+  drawings.push({
+    id,name,group,floor,cached:true,seenNew:false,blank:true,
+    mmPerUnit:DEFAULT_MM_PER_UNIT, sheetSrc:b.src, sheetW:u.w, sheetH:u.h,
+    versions:[{v:'1.0',status:'published',date:todayStr().replace(/-/g,'/'),note:'白紙（方眼）を初版として作成。',diff:{tag:'REV.1.0'}}],
+  });
+  closeBlankDialog();
+  state.selectedId=id; state.viewingVer=null; setTool('nav');
+  closeDrawers(); renderAll(); fitView();
+  toast(`${name} を白紙 v1.0 として追加しました`,'ok');
+}
+$('#btnBlankDwg').addEventListener('click',openBlankDialog);
+$('#blkSize').addEventListener('change',updateBlankPreview);
+$('#blkOrient').addEventListener('change',updateBlankPreview);
+$('#blkGroup').addEventListener('change',e=>{ $('#blkGroupNewRow').style.display = e.target.value==='__new' ? '' : 'none'; });
+$('#blkClose').addEventListener('click',closeBlankDialog);
+$('#blkCancel').addEventListener('click',closeBlankDialog);
+$('#blkAdd').addEventListener('click',commitBlank);
+$('#blkScrim').addEventListener('click',e=>{ if(e.target.id==='blkScrim') closeBlankDialog(); });
 
 /* ===== render ===== */
 function renderList(){
@@ -4349,7 +4711,7 @@ function renderList(){
         </div>
         <div class="r2">
           <span class="ver-tag pub">v${pub?pub.v:'—'} 最新</span>
-          ${d.imported?'<span class="imported-chip">取り込み</span>':''}
+          ${d.blank?'<span class="imported-chip">白紙</span>':d.imported?'<span class="imported-chip">取り込み</span>':''}
           ${d.cached?`<span class="chip cache-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>保存済</span>`
             :`<span class="chip">${locked?'未保存':'クラウド'}</span>`}
         </div>
@@ -4542,8 +4904,10 @@ function uploadDraft(){
     state.viewingVer=nextV;toast(`v${nextV} を仮登録しました（公開待ち）`,'ok');renderAll();fitView();
   },1100);
 }
-function publishDraft(){
+async function publishDraft(){
   const d=dwg();const draft=d.versions.find(v=>v.status==='draft');if(!draft)return;
+  const ok=await gConfirm({title:'このバージョンを公開しますか？',desc:`v${draft.v} を最新版として公開します。<br>現在の最新版は旧版になり、全員の表示が新しい版に切り替わります。`,ok:'公開する',danger:false});
+  if(!ok) return;
   d.versions.forEach(v=>{if(v.status==='published')v.status='superseded';});
   draft.status='published';draft.date='2026/07/12';state.viewingVer=draft.v;d.seenNew=true;
   toast(`v${draft.v} を最新版として公開しました`,'ok');pushNotify(d,draft.v);renderAll();
@@ -4602,10 +4966,217 @@ function toast(msg,kind){
   t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2700);
 }
 
+/* ===================================================================
+   誤動作防止パック（v7.29）：自動保存/離脱ガード・アンドゥ拡張・確認・閲覧ロック
+   =================================================================== */
+
+/* ---- C. 汎用確認ダイアログ（Promiseを返す） ---- */
+function gConfirm({title,desc,ok,danger}){
+  return new Promise(res=>{
+    $('#gcTitle').textContent=title||'確認';
+    $('#gcDesc').innerHTML=desc||'';
+    const okBtn=$('#gcOk'); okBtn.textContent=ok||'OK';
+    okBtn.className = danger?'btn-danger':'btn-primary';
+    const scrim=$('#gConfirmScrim');
+    const close=v=>{ scrim.classList.remove('show'); okBtn.onclick=null; $('#gcCancel').onclick=null; scrim.onclick=null; res(v); };
+    okBtn.onclick=()=>close(true);
+    $('#gcCancel').onclick=()=>close(false);
+    scrim.onclick=e=>{ if(e.target.id==='gConfirmScrim') close(false); };
+    scrim.classList.add('show');
+  });
+}
+
+/* ---- D. 閲覧ロック（見るだけモード）：全編集ジェスチャーを無効化 ---- */
+function setViewLock(on){
+  state.viewLock=on;
+  $('#btnLock').classList.toggle('locked-on',on);
+  $('#lockPill').style.display = on?'':'none';
+  if(on) setTool('nav');
+  renderViewer(); // ツールのロック表示を更新
+  toast(on?'閲覧ロック中：編集できません':'閲覧ロックを解除しました', on?'warn':'ok');
+}
+
+/* ---- B. アンドゥ拡張：strokes配列のスナップショット履歴（追加/移動/リサイズ/削除/全消去を統一） ---- */
+let inkHist={}, inkRedo={};
+let txnBefore=null, txnKey=null;
+function cloneArr(a){ return JSON.parse(JSON.stringify(a||[])); }
+function beginInkTxn(){ if(txnBefore!==null) return; txnKey=inkKey(); txnBefore=cloneArr(strokes[txnKey]); }
+function cancelInkTxn(){ txnBefore=null; txnKey=null; }
+function commitInkTxn(){
+  if(txnBefore===null) return;
+  const k=txnKey;
+  if(JSON.stringify(strokes[k]||[])!==JSON.stringify(txnBefore)){
+    (inkHist[k]=inkHist[k]||[]).push(txnBefore);
+    if(inkHist[k].length>60) inkHist[k].shift();
+    inkRedo[k]=[];
+  }
+  txnBefore=null; txnKey=null;
+}
+function undoInk(){
+  if(polyDraft) finishPoly();
+  const k=inkKey(), h=inkHist[k];
+  if(!h||!h.length) return;
+  (inkRedo[k]=inkRedo[k]||[]).push(cloneArr(strokes[k]));
+  strokes[k]=h.pop();
+  deselectShape(); redrawInk();
+}
+function redoInk(){
+  if(polyDraft) finishPoly();
+  const k=inkKey(), r=inkRedo[k];
+  if(!r||!r.length) return;
+  (inkHist[k]=inkHist[k]||[]).push(cloneArr(strokes[k]));
+  strokes[k]=r.pop();
+  deselectShape(); redrawInk();
+}
+
+/* ---- A. 自動保存（IndexedDB）＋離脱ガード ---- */
+const IDB_NAME='zumen-autosave', IDB_STORE='kv', IDB_KEY='session';
+function idbOpen(){ return new Promise((res,rej)=>{ let r; try{ r=indexedDB.open(IDB_NAME,1);}catch(e){return rej(e);} r.onupgradeneeded=()=>{ try{ if(!r.result.objectStoreNames.contains(IDB_STORE)) r.result.createObjectStore(IDB_STORE); }catch(_){} }; r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbPut(k,v){ const db=await idbOpen(); return new Promise((res,rej)=>{ const t=db.transaction(IDB_STORE,'readwrite'); t.objectStore(IDB_STORE).put(v,k); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+async function idbGet(k){ const db=await idbOpen(); return new Promise((res,rej)=>{ const t=db.transaction(IDB_STORE,'readonly'); const rq=t.objectStore(IDB_STORE).get(k); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error); }); }
+/* --- ③ 保存対象ストアのマニフェスト（新ストアはここに1行足すだけで保存・復元に含まれる＝取りこぼし防止） --- */
+const SAVE_STORES=[
+  {k:'drawings',       get:()=>drawings,        set:v=>{ drawings.splice(0,drawings.length,...(v||[])); }},
+  {k:'pins',           get:()=>pins,            set:v=>{ pins=v||{}; }},
+  {k:'strokes',        get:()=>strokes,         set:v=>{ strokes=v||{}; }},
+  {k:'ledgerPhotoMeta',get:()=>ledgerPhotoMeta, set:v=>{ ledgerPhotoMeta=v||{}; }},
+  {k:'ledgerPinMeta',  get:()=>ledgerPinMeta,   set:v=>{ ledgerPinMeta=v||{}; }},
+  {k:'ledgerPlan',     get:()=>ledgerPlan,      set:v=>{ ledgerPlan=v||{}; }},
+  {k:'photoInk',       get:()=>photoInk,        set:v=>{ photoInk=v||{}; }},
+];
+const SAVE_SEQS=[
+  {k:'dwgSeq', get:()=>dwgSeq, set:v=>{ if(v) dwgSeq=v; }},
+  {k:'slotSeq',get:()=>slotSeq,set:v=>{ if(v!=null) slotSeq=v; }},
+  {k:'pinSeq', get:()=>pinSeq, set:v=>{ if(v) pinSeq=v; }},
+];
+
+/* --- ④ 画像(dataURL)はハッシュキーで別保存し、スナップショットには参照 {__img:hash} だけ持つ --- */
+const IMG_PREFIX='img:';
+let savedImgHashes=new Set(); // このセッションで既にIDBへ書いた画像ハッシュ（重複書き込み回避）
+function imgRef(src, imgMap){
+  if(typeof src!=='string' || src.slice(0,5)!=='data:') return src;
+  const h=fnv1aHash(src); imgMap[h]=src; return {__img:h};
+}
+// ライブ状態は変えずに、画像を参照化したスナップショットを作る。imgMap に実体(hash→dataURL)を貯める。
+function buildSnapshot(imgMap){
+  const snap={ v:2, savedAt:Date.now(), ui:{ selectedId:state.selectedId, role:state.role, viewingVer:state.viewingVer } };
+  SAVE_STORES.forEach(s=>{ snap[s.k]=s.get(); });
+  SAVE_SEQS.forEach(s=>{ snap[s.k]=s.get(); });
+  // 画像を含む3箇所だけ浅く作り直して参照化
+  snap.drawings=(snap.drawings||[]).map(d=> d? Object.assign({},d,{sheetSrc:imgRef(d.sheetSrc,imgMap)}) : d);
+  const pinsOut={}; Object.keys(snap.pins||{}).forEach(id=>{
+    pinsOut[id]=(snap.pins[id]||[]).map(p=>Object.assign({},p,{photos:(p.photos||[]).map(src=>imgRef(src,imgMap))}));
+  }); snap.pins=pinsOut;
+  const planOut={}; Object.keys(snap.ledgerPlan||{}).forEach(did=>{ planOut[did]={};
+    Object.keys(snap.ledgerPlan[did]||{}).forEach(pid=>{
+      planOut[did][pid]=(snap.ledgerPlan[did][pid]||[]).map(sl=>Object.assign({},sl,{src:imgRef(sl.src,imgMap)}));
+    });
+  }); snap.ledgerPlan=planOut;
+  return snap;
+}
+async function derefImg(v, cache){
+  if(v && typeof v==='object' && v.__img){
+    const h=v.__img; savedImgHashes.add(h); // 復元した画像は書き込み済み扱い
+    if(cache[h]!==undefined) return cache[h];
+    let d=''; try{ d=(await idbGet(IMG_PREFIX+h))||''; }catch(e){}
+    cache[h]=d; return d;
+  }
+  return v; // 旧形式(v:1)は dataURL文字列がそのまま入っているので素通し（後方互換）
+}
+async function resolveImages(snap){
+  const cache={};
+  for(const d of (snap.drawings||[])){ if(d) d.sheetSrc=await derefImg(d.sheetSrc,cache); }
+  for(const id of Object.keys(snap.pins||{})){
+    for(const p of (snap.pins[id]||[])){ const out=[]; for(const it of (p.photos||[])) out.push(await derefImg(it,cache)); p.photos=out; }
+  }
+  for(const did of Object.keys(snap.ledgerPlan||{})){
+    for(const pid of Object.keys(snap.ledgerPlan[did]||{})){
+      for(const sl of (snap.ledgerPlan[did][pid]||[])) sl.src=await derefImg(sl.src,cache);
+    }
+  }
+  return snap;
+}
+// 変更検知：画像の実体(base64)は length に潰して軽く署名（編集＝形状移動・文字も検出しつつ毎回の巨大シリアライズを回避）
+function stateSig(){
+  try{
+    const dw=drawings.map(d=>d?Object.assign({},d,{sheetSrc:d.sheetSrc?('#'+d.sheetSrc.length):null}):d);
+    const pn={}; Object.keys(pins).forEach(id=>{ pn[id]=(pins[id]||[]).map(p=>Object.assign({},p,{photos:(p.photos||[]).map(s=>typeof s==='string'?s.length:0)})); });
+    return JSON.stringify([dw,pn,strokes,ledgerPhotoMeta,ledgerPinMeta,ledgerPlan,photoInk]);
+  }catch(e){ return 'x'+Math.random(); }
+}
+let lastSavedSig=null, driveSavedSig=null, autosaveInflight=false;
+function hasAnyWork(){
+  return drawings.length>0
+    || Object.keys(strokes).some(k=>(strokes[k]||[]).length)
+    || Object.keys(pins).some(k=>(pins[k]||[]).length);
+}
+function isDriveDirty(){
+  if(!hasAnyWork()) return false;
+  return driveSavedSig===null || stateSig()!==driveSavedSig;
+}
+async function autosaveNow(force){
+  const sig=stateSig();
+  if(!force && sig===lastSavedSig) return;
+  if(autosaveInflight) return;
+  autosaveInflight=true;
+  try{
+    const imgMap={};
+    const snap=buildSnapshot(imgMap);
+    for(const h of Object.keys(imgMap)){ // 新規画像だけ書く（同じ写真は一度だけ）
+      if(savedImgHashes.has(h)) continue;
+      try{ await idbPut(IMG_PREFIX+h, imgMap[h]); savedImgHashes.add(h); }catch(e){ /* 個別画像失敗は無視 */ }
+    }
+    await idbPut(IDB_KEY, snap);
+    lastSavedSig=sig;
+  }catch(e){ /* 容量超過・非対応環境などは握りつぶす（最終保存先はGoogleドライブ） */ }
+  finally{ autosaveInflight=false; }
+}
+async function restoreFromAutosave(){
+  let s=null;
+  try{ s=await idbGet(IDB_KEY); }catch(e){ return false; }
+  if(!s || !s.drawings) return false;
+  try{ await resolveImages(s); }catch(e){ /* 画像復元に失敗しても本体は復元を試みる */ }
+  const work = (s.drawings.length>0)
+    || (s.strokes && Object.keys(s.strokes).some(k=>(s.strokes[k]||[]).length))
+    || (s.pins && Object.keys(s.pins).some(k=>(s.pins[k]||[]).length));
+  if(!work) return false;
+  SAVE_STORES.forEach(st=>{ if(s[st.k]!==undefined) st.set(s[st.k]); });
+  SAVE_SEQS.forEach(st=>{ if(s[st.k]!==undefined) st.set(s[st.k]); });
+  if(s.ui){
+    if(s.ui.selectedId && drawings.some(d=>d.id===s.ui.selectedId)) state.selectedId=s.ui.selectedId;
+    if(s.ui.role) state.role=s.ui.role;
+    state.viewingVer=s.ui.viewingVer||null;
+  }
+  return true;
+}
+/* --- ② グローバルエラーハンドラ：例外で握って作業を自動保存＋控えめに通知（UI全体の無反応化を防ぐ） --- */
+let lastErrToast=0;
+function onGlobalError(){
+  autosaveNow(true); // まず作業を退避
+  const now=Date.now();
+  if(now-lastErrToast>5000){ lastErrToast=now; try{ toast('エラーが発生しました（作業は自動保存されています）','warn'); }catch(_){} }
+}
+window.addEventListener('error', e=>{ if(e && e.error) onGlobalError(); });
+window.addEventListener('unhandledrejection', ()=>onGlobalError());
+// 離脱ガード：端末には自動保存されるが、Googleドライブ未保存の変更があるときだけ確認を出す
+window.addEventListener('beforeunload',e=>{
+  if(isDriveDirty() && gasUrl()){ e.preventDefault(); e.returnValue=''; return ''; }
+});
+// バックグラウンド化・離脱の瞬間に確実に自動保存（iOSは pagehide / visibilitychange が信頼できる）
+window.addEventListener('pagehide',()=>{ autosaveNow(true); });
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden') autosaveNow(true); });
+setInterval(()=>autosaveNow(false), 5000); // 定期保存（変化があるときだけ書き込む）
+
+$('#btnLock').addEventListener('click',()=>setViewLock(!state.viewLock));
+
 /* ===== boot ===== */
 function renderAll(){renderList();renderViewer();renderContext();updateTabs();}
 window.addEventListener('resize',fitView);
 renderAll();fitView();layoutPanels();updateCollapsedGlyphs();
+restoreFromAutosave().then(ok=>{
+  if(ok){ renderAll(); fitView(); layoutPanels(); updateCollapsedGlyphs(); toast('前回の作業を復元しました','ok'); }
+  lastSavedSig=stateSig(); driveSavedSig=stateSig(); // 復元直後は「未変更」から開始
+});
 </script>
 </body>
 </html>

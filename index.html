@@ -562,6 +562,28 @@
        貼り付け可。ボタンは選択数/グループ有無/クリップボード有無で活性を自動切替。
        ※選択ツールの単体リサイズは今回未実装（必要なら次で追加）。
 -->
+
+<!--
+  build v7.39 (修正：選択バーのボタン文字が縦に折り返して崩れる)  — 選択バーの「範囲/自由」「グループ化/解除/
+       コピー/貼り付け」ボタンのラベルが縦に折り返していた不具合を修正。各ボタンに white-space:nowrap と
+       flex-shrink:0 を付与し、トグル/アクションのコンテナも縮小しないように。ヒント文は min-width:0＋省略(...)で
+       縮むようにし、選択バー自体に max-width:calc(100vw-24px) を設定して画面幅を超えないように。ヒント文言も短縮。
+-->
+
+<!--
+  build v7.40 (修正：説明トーストがドックに重なる)  — トースト（ツール切替時の説明など）とドックがどちらも
+       「下端22px・中央」で、トーストがドックのボタンを覆っていた。トーストの bottom を 112px（＝ドック高さ約76px＋
+       下端22px＋余白）に上げ、ドックの上に表示されるようにした。スライドイン演出はそのまま。
+-->
+
+<!--
+  build v7.41 (修正：Apple Pencilの線が途切れる/飛ぶ/カクつく＝描画パフォーマンス)  — redrawInk() が毎回
+       canvas.width=CW / canvas.height=CH を代入していた。Canvasは幅・高さを代入するたびに（同じ値でも）中身を
+       破棄して再確保するため、ペン描画中は毎フレーム＋全ストローク再描画で重くなり、線が増えるほど途切れ・飛び・
+       カクつきが出ていた。サイズが変わったときだけ再確保し、通常は clearRect のみに変更。あわせて描画/移動中は
+       redrawInk 末尾の refreshInkBtns（毎フレームのDOM書き換え）を省き、確定時（commitInkTxn）に更新するように。
+       これでペン描画のフレーム負荷が大きく下がる。getCoalescedEvents による点の取りこぼし対策は従来どおり。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -904,7 +926,7 @@
   .push .bd{font-size:13px;color:var(--muted);line-height:1.5} .push .bd b{color:var(--signal);font-family:var(--mono)}
 
   /* toast */
-  .toast{position:fixed;bottom:calc(22px + env(safe-area-inset-bottom,0px));left:50%;transform:translate(-50%,20px);opacity:0;
+  .toast{position:fixed;bottom:calc(112px + env(safe-area-inset-bottom,0px));left:50%;transform:translate(-50%,20px);opacity:0;
     pointer-events:none;
     background:var(--panel3);border:1px solid var(--line2);border-radius:12px;padding:14px 20px;font-size:14px;
     display:flex;align-items:center;gap:11px;z-index:90;transition:.25s;box-shadow:0 12px 34px rgba(0,0,0,.45);max-width:88vw}
@@ -1096,15 +1118,17 @@
   .measure-bar .mb-icon{display:flex;color:var(--signal)}
   .measure-bar .mb-hint{color:var(--ink2);white-space:nowrap}
   .measure-bar .mb-sep{width:1px;height:20px;background:var(--line2)}
-  .sel-toggle{display:flex;gap:3px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:3px}
-  .sel-mode-btn{height:30px;padding:0 12px;border-radius:7px;color:var(--muted);font-size:12.5px;font-weight:600;background:transparent}
+  .sel-toggle{display:flex;gap:3px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:3px;flex-shrink:0}
+  .sel-mode-btn{height:30px;padding:0 12px;border-radius:7px;color:var(--muted);font-size:12.5px;font-weight:600;background:transparent;white-space:nowrap;flex-shrink:0}
   .sel-mode-btn.on{background:var(--panel3);color:var(--text)}
   .sel-mode-btn:active{transform:scale(.96)}
-  .sel-actions{display:flex;gap:6px}
-  .sel-act{height:30px;padding:0 11px;border-radius:8px;font-size:12.5px;font-weight:600;
+  .sel-actions{display:flex;gap:5px;flex-shrink:0}
+  .sel-act{height:30px;padding:0 10px;border-radius:8px;font-size:12.5px;font-weight:600;white-space:nowrap;flex-shrink:0;
     color:var(--text);background:var(--panel2);border:1px solid var(--line2)}
   .sel-act:active{transform:scale(.96);background:var(--panel3)}
   .sel-act[disabled]{opacity:.38;pointer-events:none}
+  .select-bar .mb-hint{min-width:0;overflow:hidden;text-overflow:ellipsis;flex-shrink:1}
+  .select-bar{max-width:calc(100vw - 24px)}
   .mb-scale{display:flex;align-items:center;gap:6px;cursor:pointer;
     background:var(--panel3);border:1px solid var(--line2);border-radius:8px;
     padding:5px 10px;color:var(--ink);font-size:12px}
@@ -1439,7 +1463,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.38 · 選択フェーズ2：グループ化・コピー＆貼り付け</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.41 · 修正：Apple Pencilの線が途切れる/カクつく</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -2933,7 +2957,10 @@ function drawInkItem(c, item, draftInfo){
 }
 
 function redrawInk(){
-  canvas.width=CW;canvas.height=CH;canvas.style.width='100%';canvas.style.height='100%';
+  // Canvasは width/height を代入するたびに中身を破棄・再確保する。毎フレームやるとペンがカクつくので
+  // サイズが変わったときだけ実体を作り直し、通常は clearRect だけで消す。
+  if(canvas.width!==CW||canvas.height!==CH){ canvas.width=CW; canvas.height=CH; }
+  canvas.style.width='100%';canvas.style.height='100%';
   ctx.clearRect(0,0,CW,CH);
   ctx.lineCap='round';ctx.lineJoin='round';
   const list=strokes[inkKey()]||[];
@@ -2978,7 +3005,7 @@ function redrawInk(){
     }
     ctx.restore();
   }
-  refreshInkBtns();
+  if(!curItem && !selDraft && !dragMode) refreshInkBtns(); // 描画/移動中は毎フレームのDOM更新を省いてカクつきを防ぐ
 }
 function setTool(t){
   if(t!=='shape' && polyDraft) finishPoly();
@@ -4302,8 +4329,8 @@ function updateSelectBar(){
   const hint=$('#selHint');
   if(show && hint){
     hint.textContent = selMulti.length
-      ? `${selMulti.length}個選択中（ドラッグで移動・消しゴムで削除）`
-      : (state.selMode==='rect' ? '矩形でドラッグして囲む（完全に囲んだものだけ選択）' : 'なぞって囲む（完全に囲んだものだけ選択）');
+      ? `${selMulti.length}個選択中`
+      : (state.selMode==='rect' ? '矩形で囲んで選択（完全に囲む）' : 'なぞって囲んで選択（完全に囲む）');
   }
   const g=$('#selGroup'), u=$('#selUngroup'), c=$('#selCopy'), p=$('#selPaste');
   if(g) g.disabled = selMulti.length<2;
@@ -5334,6 +5361,7 @@ function commitInkTxn(){
     (inkHist[k]=inkHist[k]||[]).push(txnBefore);
     if(inkHist[k].length>60) inkHist[k].shift();
     inkRedo[k]=[];
+    refreshInkBtns(); // 確定後にボタン状態を更新（描画中は省いているため）
   }
   txnBefore=null; txnKey=null;
 }

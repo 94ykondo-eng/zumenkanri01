@@ -584,6 +584,19 @@
        redrawInk 末尾の refreshInkBtns（毎フレームのDOM書き換え）を省き、確定時（commitInkTxn）に更新するように。
        これでペン描画のフレーム負荷が大きく下がる。getCoalescedEvents による点の取りこぼし対策は従来どおり。
 -->
+
+<!--
+  build v7.42 (Apple Pencilの書き味改善2：確定線のキャッシュ合成＋手のひら誤パン防止)  — v7.41で変化を感じない
+       との報告を受けた追加対策。
+       ① カクつき：ペン描画中も redrawInk() が毎フレーム「全ストローク」を描き直していたのが主因。オフスクリーン
+          bgCanvas に確定済みストロークを一度だけ焼き込み(buildBgCache)、以降の pointermove は「キャッシュ＋描いて
+          いる線(curItem)だけ」を合成(drawFreeLive)する方式に変更。線が何本あっても1フレームの負荷が一定になり、
+          Apple Pencilで途切れ・カクつきが出にくくなる。確定(pointerup)時に通常のredrawInkで全体を正規化。
+          ペン以外（図形/計測）は従来どおり全再描画（連続移動が少なく問題になりにくいため）。
+       ② 飛ぶ：作図/選択/ピン中は1本指（手のひら含む）で画面を動かさないよう panLock を入力種別に依存させず
+          「作図系ツール＋編集可」で有効化。ペン先が触れる前に手のひらでキャンバスがずれる（＝線が飛ぶ）のを防ぐ。
+          移動は従来どおり2本指。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1463,7 +1476,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.41 · 修正：Apple Pencilの線が途切れる/カクつく</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.42 · Apple Pencilの書き味改善（キャッシュ合成・誤パン防止）</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -2345,6 +2358,7 @@ $('#zoomVal').addEventListener('click',()=>{const r=vp.getBoundingClientRect();z
 
 /* ===== unified pointer gestures (pan / pinch / draw) ===== */
 const canvas=$('#inkLayer'), ctx=canvas.getContext('2d');
+const bgCanvas=document.createElement('canvas'), bgCtx=bgCanvas.getContext('2d'); // 確定済みストロークのキャッシュ（ペン描画中の高速化用）
 const pointers=new Map();
 let curItem=null, gesture=null;
 let selectedItem=null, dragMode=null; // selection + move/resize of an already-placed shape
@@ -2637,9 +2651,10 @@ vp.addEventListener('pointerdown',e=>{
   if(pointers.size===1) downInfo={x:e.clientX,y:e.clientY,moved:false};
   // 指で描ける/ピンを刺せるのは「ペンシル未使用のセッション」のみ。ペンシル使用後は指＝移動/ズーム専用。
   const inputCanDraw = e.pointerType!=='touch' || !penSeen;
-  const drawable=(state.tool==='pen'||state.tool==='shape'||state.tool==='measure'||state.tool==='select') && canPinEdit() && inputCanDraw;
+  const drawTool = state.tool==='pen'||state.tool==='shape'||state.tool==='measure'||state.tool==='select';
+  const drawable = drawTool && canPinEdit() && inputCanDraw;
   const pinPlacing = state.tool==='pin' && canPinEdit() && inputCanDraw; // ④ ピン設置中も1本指移動を無効化
-  if(pointers.size===1) panLock = drawable || pinPlacing; // 作図/ピン中の1本指は移動しない（余白でも）
+  if(pointers.size===1) panLock = (drawTool || state.tool==='pin') && canPinEdit(); // 作図/選択/ピン中は1本指（手のひら含む）で画面を動かさない（誤パン＝線が飛ぶのを防止）
   const isPoly=state.tool==='shape' && state.shapeType==='poly';
   if(pointers.size===1 && polyDraft && !overSheet(e.clientX,e.clientY)){
     finishPoly(); polyPending=false; downInfo=null; return; // touching outside the drawing ends the line
@@ -2666,7 +2681,7 @@ vp.addEventListener('pointerdown',e=>{
     curItem={type:'free', pts:[pt], ...style};
     (strokes[inkKey()]=strokes[inkKey()]||[]).push(curItem);
     redoStrokes[inkKey()]=[];
-    redrawInk(); // 下ろした瞬間に1点目を即描画（書き始めの反応を良くする）
+    buildBgCache(); drawFreeLive(); // 確定済みをキャッシュ化し、描き始めの1点を即描画（以降は追記合成のみ）
   } else if(pointers.size===1 && drawable && state.tool==='measure' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
     curItem={type:'measure', x1:pt.x, y1:pt.y, x2:pt.x, y2:pt.y, color:MEASURE_COLOR, width:2};
@@ -2747,6 +2762,7 @@ vp.addEventListener('pointermove',e=>{
       } else {
         curItem.pts.push(pt);
       }
+      drawFreeLive(); return; // キャッシュ＋描いている線だけ合成（全ストローク再描画しない＝カクつき防止）
     } else if(curItem.type==='rect'||curItem.type==='ellipse'){
       if(effectiveShift()){
         const dx=pt.x-curItem.x1, dy=pt.y-curItem.y1;
@@ -3006,6 +3022,23 @@ function redrawInk(){
     ctx.restore();
   }
   if(!curItem && !selDraft && !dragMode) refreshInkBtns(); // 描画/移動中は毎フレームのDOM更新を省いてカクつきを防ぐ
+}
+// ペン描画の高速化：確定済みストロークを一度だけオフスクリーンへ描き、以降は「キャッシュ＋描いている線」だけ合成する。
+// これで線が何本あっても1フレームの負荷が一定になり、Apple Pencilでも途切れ・カクつきが出にくくなる。
+function buildBgCache(){
+  if(bgCanvas.width!==CW||bgCanvas.height!==CH){ bgCanvas.width=CW; bgCanvas.height=CH; }
+  bgCtx.clearRect(0,0,CW,CH);
+  bgCtx.lineCap='round'; bgCtx.lineJoin='round';
+  const list=strokes[inkKey()]||[];
+  const draftInfo={item:polyDraft, hoverPt:hoverPt};
+  list.forEach(it=>{ if(it!==curItem) drawInkItem(bgCtx, it, draftInfo); }); // 描いている線(curItem)以外を焼き込む
+}
+function drawFreeLive(){
+  if(canvas.width!==CW||canvas.height!==CH){ canvas.width=CW; canvas.height=CH; }
+  ctx.clearRect(0,0,CW,CH);
+  ctx.drawImage(bgCanvas,0,0);                 // 確定済み（キャッシュ）
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  if(curItem) drawInkItem(ctx, curItem, {item:polyDraft, hoverPt:hoverPt}); // 描いている線だけ
 }
 function setTool(t){
   if(t!=='shape' && polyDraft) finishPoly();

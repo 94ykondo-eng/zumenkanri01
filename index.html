@@ -541,6 +541,27 @@
        囲み枠を描画。undo/clear等で消えた項目は list に無ければ選択から自動的に外す。
        [フェーズ2予定] グループ化・コピー＆貼り付け（この土台の上に実装）。
 -->
+
+<!--
+  build v7.37 (図形ツールを「描く専用」に：重ねて描けるように)  — 図形ツールで既存の線・図形の輪郭付近から
+       描き始めると「選択・移動」に取られ、重ねて描けない問題への対策。選択ツールを独立させたのを機に、
+       図形ツールの pointerdown から既存図形の選択/移動/リサイズ処理（hitHandle/hitTestShape/pointInShapeBody→
+       dragMode）を撤去し、常に新規描画（またはpoly点追加）にした。これで既存に重ねて自由に描ける。
+       選択・移動・削除は「選択」ツールに集約（単体リサイズはフェーズ2で選択ツールに追加予定）。
+       ※ selectedItem は図面側では設定されなくなるため、図形モードの消しゴム（選択削除）は無効化される
+       （削除は選択ツールで行う）。pointermove の move/resize 分岐は写真注釈側でのみ使用。
+-->
+
+<!--
+  build v7.38 (選択フェーズ2：グループ化・コピー＆貼り付け)  — 選択バーに「グループ化／解除／コピー／貼り付け」を
+       追加。gid（グループID）をアイテムに付与し、同一gidは不可分＝メンバーを1つでも選ぶと自動で全体を選択
+       （expandGroups）。範囲/自由選択に加え、選択ツール内のタップでその位置のアイテム（グループなら全体）を選択
+       （hitSelItem：図形は輪郭、ペンは線の近く）。コピーは選択をdeep copyでクリップボードへ、貼り付けは +20 offset で
+       複製し新gidに振り直し（グループ構造は維持）、貼り付け直後は選択状態にしてそのまま配置可能。グループ化・解除・
+       貼り付けはいずれもアンドゥ対応（beginInkTxn/commitInkTxn）。クリップボードはメモリ保持のため図面をまたいで
+       貼り付け可。ボタンは選択数/グループ有無/クリップボード有無で活性を自動切替。
+       ※選択ツールの単体リサイズは今回未実装（必要なら次で追加）。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1079,6 +1100,11 @@
   .sel-mode-btn{height:30px;padding:0 12px;border-radius:7px;color:var(--muted);font-size:12.5px;font-weight:600;background:transparent}
   .sel-mode-btn.on{background:var(--panel3);color:var(--text)}
   .sel-mode-btn:active{transform:scale(.96)}
+  .sel-actions{display:flex;gap:6px}
+  .sel-act{height:30px;padding:0 11px;border-radius:8px;font-size:12.5px;font-weight:600;
+    color:var(--text);background:var(--panel2);border:1px solid var(--line2)}
+  .sel-act:active{transform:scale(.96);background:var(--panel3)}
+  .sel-act[disabled]{opacity:.38;pointer-events:none}
   .mb-scale{display:flex;align-items:center;gap:6px;cursor:pointer;
     background:var(--panel3);border:1px solid var(--line2);border-radius:8px;
     padding:5px 10px;color:var(--ink);font-size:12px}
@@ -1413,7 +1439,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.36 · 範囲/自由 選択ツール（複数選択・移動/削除）</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.38 · 選択フェーズ2：グループ化・コピー＆貼り付け</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -1501,6 +1527,13 @@
     </div>
     <div class="mb-sep"></div>
     <span class="mb-hint" id="selHint">囲んで選択（完全に囲んだものだけ）</span>
+    <div class="mb-sep"></div>
+    <div class="sel-actions">
+      <button id="selGroup" class="sel-act" disabled>グループ化</button>
+      <button id="selUngroup" class="sel-act" disabled>解除</button>
+      <button id="selCopy" class="sel-act" disabled>コピー</button>
+      <button id="selPaste" class="sel-act" disabled>貼り付け</button>
+    </div>
   </div>
 
 
@@ -2409,8 +2442,76 @@ function selectedByLasso(item, pts){
 }
 function computeSelection(){
   const arr=strokes[inkKey()]||[];
-  selMulti = arr.filter(it=> SEL_TYPES.includes(it.type) &&
+  let sel=arr.filter(it=> SEL_TYPES.includes(it.type) &&
     (selDraft.mode==='rect' ? selectedByRect(it, selDraft) : selectedByLasso(it, selDraft.pts)));
+  selMulti=expandGroups(sel, arr);
+}
+/* ---- フェーズ2：グループ化・コピー＆貼り付け ---- */
+let clipboard=[]; // コピーしたアイテム（deep copy）
+function nextGid(){ return 'g'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function cloneItem(it){ return JSON.parse(JSON.stringify(it)); }
+// 選択にグループのメンバーが1つでも含まれていたら、そのグループ全体を選択に含める（グループは不可分）
+function expandGroups(sel, arr){
+  const gids=new Set(sel.filter(it=>it.gid).map(it=>it.gid));
+  if(!gids.size) return sel;
+  const set=new Set(sel);
+  arr.forEach(it=>{ if(it.gid && gids.has(it.gid)) set.add(it); });
+  return [...set];
+}
+// タップ位置のアイテムを拾う（図形＝輪郭、ペン＝線の近く）
+function hitSelItem(pt){
+  const arr=strokes[inkKey()]||[];
+  for(let i=arr.length-1;i>=0;i--){ const it=arr[i];
+    if(!SEL_TYPES.includes(it.type)) continue;
+    if(it.type==='free'){
+      if(it.pts.length===1){ if(Math.hypot(pt.x-it.pts[0].x,pt.y-it.pts[0].y)<14) return it; }
+      for(let j=0;j<it.pts.length-1;j++){ if(distToSegment(pt,it.pts[j].x,it.pts[j].y,it.pts[j+1].x,it.pts[j+1].y)<14) return it; }
+    } else if(pointInShapeBody(it,pt)) return it;
+  }
+  return null;
+}
+function isSelTap(d){
+  if(d.mode==='rect') return Math.abs(d.x1-d.x0)<4 && Math.abs(d.y1-d.y0)<4;
+  const xs=d.pts.map(p=>p.x), ys=d.pts.map(p=>p.y);
+  return (Math.max(...xs)-Math.min(...xs))<6 && (Math.max(...ys)-Math.min(...ys))<6;
+}
+function selTapPoint(d){ return d.mode==='rect' ? {x:d.x0,y:d.y0} : {x:d.pts[0].x,y:d.pts[0].y}; }
+function groupSelection(){
+  if(selMulti.length<2) return;
+  beginInkTxn();
+  const gid=nextGid();
+  selMulti.forEach(it=>{ it.gid=gid; });
+  redrawInk(); commitInkTxn(); updateSelectBar();
+  toast(`${selMulti.length}個をグループ化しました`,'ok');
+}
+function ungroupSelection(){
+  if(!selMulti.some(it=>it.gid)) return;
+  beginInkTxn();
+  selMulti.forEach(it=>{ delete it.gid; });
+  redrawInk(); commitInkTxn(); updateSelectBar();
+  toast('グループを解除しました','ok');
+}
+function copySelection(){
+  if(!selMulti.length) return;
+  clipboard=selMulti.map(cloneItem);
+  updateSelectBar();
+  toast(`${clipboard.length}個をコピーしました`,'ok');
+}
+function pasteClipboard(){
+  if(!clipboard.length) return;
+  beginInkTxn();
+  const off=20; // 貼り付けオフセット（canvas単位）
+  const gidMap={}; const arr=(strokes[inkKey()]=strokes[inkKey()]||[]); const pasted=[];
+  clipboard.forEach(src=>{
+    const it=cloneItem(src);
+    if(it.gid){ if(!gidMap[it.gid]) gidMap[it.gid]=nextGid(); it.gid=gidMap[it.gid]; } // グループ構造を維持して新gidへ
+    if(it.type==='free'||it.type==='poly'){ it.pts.forEach(p=>{ p.x+=off; p.y+=off; }); }
+    else { it.x1+=off; it.y1+=off; it.x2+=off; it.y2+=off; }
+    arr.push(it); pasted.push(it);
+  });
+  selMulti=pasted; // 貼り付けたものを選択状態に（そのままドラッグで配置できる）
+  redrawInk(); commitInkTxn(); updateSelectBar();
+  toast(`${pasted.length}個を貼り付けました`,'ok');
 }
 function selGroupBBox(){ // 選択全体の外接矩形
   if(!selMulti.length) return null;
@@ -2522,34 +2623,15 @@ vp.addEventListener('pointerdown',e=>{
   if(pointers.size===1 && drawable && overSheet(e.clientX,e.clientY)) beginInkTxn(); // B: 変更前の状態を記録（追加/移動/リサイズ/消去のアンドゥ用）
   if(pointers.size===1 && drawable && state.tool==='shape' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
-    const snapshot=item=>item.type==='poly'?{pts:item.pts.map(q=>({x:q.x,y:q.y}))}:{x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2};
-    let handled=false;
-    if(selectedItem){
-      const tol=screenTol(16);
-      const h=hitHandle(selectedItem,pt,tol);
-      if(h){ dragMode={mode:'resize',item:selectedItem,handle:h}; handled=true; }
-      else if(pointInShapeBody(selectedItem,pt)){
-        dragMode={mode:'move',item:selectedItem,startPt:pt,orig:snapshot(selectedItem),sx:e.clientX,sy:e.clientY,armed:false};
-        handled=true;
-      }
-    }
-    if(!handled){
-      const hit=hitTestShape(pt);
-      if(hit){
-        selectedItem=hit;
-        dragMode={mode:'move',item:hit,startPt:pt,orig:snapshot(hit),sx:e.clientX,sy:e.clientY,armed:false};
-        handled=true;
-      }
-    }
-    if(handled){ if(polyDraft) finishPoly(); redrawInk(); }
-    else if(!isPoly){
-      deselectShape();
+    // 図形ツールは「描く専用」：既存を掴まず常に新規描画（重ねて描ける）。選択・移動・削除は「選択」ツールへ。
+    deselectShape();
+    if(!isPoly){
       const style={color:state.inkColor,width:state.inkWidth,dash:state.inkDash,fill:state.inkFill};
       curItem={type:state.shapeType||'rect', x1:pt.x, y1:pt.y, x2:pt.x, y2:pt.y, ...style};
       (strokes[inkKey()]=strokes[inkKey()]||[]).push(curItem);
       redoStrokes[inkKey()]=[];
     } else {
-      deselectShape(); redrawInk();
+      redrawInk();
       polyPending=true; // suppress single-finger pan; the point commits on release
       updatePolyHover(e.clientX,e.clientY);
     }
@@ -2686,7 +2768,13 @@ function endPointer(e){
   if(penErasing){ penErasing=false; } // なぞり消去の終了
   if(dragMode){ dragMode=null; redrawInk(); }
   if(selMoveOrig){ selMoveOrig=null; }
-  if(selDraft){ computeSelection(); selDraft=null; redrawInk(); updateSelectBar(); }
+  if(selDraft){
+    if(isSelTap(selDraft)){ // タップ＝その位置のアイテム（グループなら全体）を選択
+      const hit=hitSelItem(selTapPoint(selDraft));
+      selMulti = hit ? expandGroups([hit], strokes[inkKey()]||[]) : [];
+    } else { computeSelection(); }
+    selDraft=null; redrawInk(); updateSelectBar();
+  }
   if(curItem){
     // discard a degenerate shape created by a mere tap with no drag (zero size, invisible)
     if(curItem.type!=='free' && curItem.x1===curItem.x2 && curItem.y1===curItem.y2){
@@ -2909,7 +2997,7 @@ function setTool(t){
   layoutPanels(); updateCollapsedGlyphs(); updateMeasureBar(); updateSelectBar();
   refreshInkBtns(); redrawInk();
   if(t==='pen')toast('ペン：1本指で描画、2本指で移動・拡大（元データは非破壊）','ok');
-  if(t==='shape')toast('図形：ドラッグで描画。シフトで正方形・正円・45°直線に固定。連続線はタップで点を追加、ダブルタップで終了','ok');
+  if(t==='shape')toast('図形：ドラッグで描画（既存に重ねて描けます）。移動・削除は「選択」ツールで。シフトで正方形・正円・45°に固定','ok');
   if(t==='pin')toast('ピン：図面タップで設置、ピンを長押し／ドラッグで移動','ok');
   if(t==='measure')toast('計測：2点をドラッグで実寸を表示。シフトで水平・垂直・45°に固定','ok');
   if(t==='select')toast('選択：囲んで図形・ペンを複数選択。選択をドラッグで移動、消しゴムで削除','ok');
@@ -3007,6 +3095,10 @@ $('#btnSelect').addEventListener('click',()=>{
 });
 $('#selModeRect').addEventListener('click',()=>{ state.selMode='rect'; selDraft=null; updateSelectBar(); });
 $('#selModeLasso').addEventListener('click',()=>{ state.selMode='lasso'; selDraft=null; updateSelectBar(); });
+$('#selGroup').addEventListener('click',groupSelection);
+$('#selUngroup').addEventListener('click',ungroupSelection);
+$('#selCopy').addEventListener('click',copySelection);
+$('#selPaste').addEventListener('click',pasteClipboard);
 $('#btnUndo').addEventListener('click',()=>{ undoInk(); });
 $('#btnRedo').addEventListener('click',()=>{ redoInk(); });
 // 全消去は破壊的操作なので、必ず確認ダイアログを挟む
@@ -4213,6 +4305,11 @@ function updateSelectBar(){
       ? `${selMulti.length}個選択中（ドラッグで移動・消しゴムで削除）`
       : (state.selMode==='rect' ? '矩形でドラッグして囲む（完全に囲んだものだけ選択）' : 'なぞって囲む（完全に囲んだものだけ選択）');
   }
+  const g=$('#selGroup'), u=$('#selUngroup'), c=$('#selCopy'), p=$('#selPaste');
+  if(g) g.disabled = selMulti.length<2;
+  if(u) u.disabled = !selMulti.some(it=>it.gid);
+  if(c) c.disabled = !selMulti.length;
+  if(p) p.disabled = !clipboard.length;
 }
 
 /* ----- scale settings: single value (縮尺比), coefficient kept internal-only ----- */

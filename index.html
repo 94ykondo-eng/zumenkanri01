@@ -646,6 +646,16 @@
        行うので線の解像度は落ちない。※Web(Safari)である以上ネイティブ(PencilKit)並みに全接触を拾うのは原理的に困難で、
        主スレッド負荷を下げて改善を狙う方針。
 -->
+
+<!--
+  build v7.48 (文字入力ツールを追加：手書きの取りこぼしを根本回避)  — ドックに「文字」ツールを新設。図面をタップ
+       するとダイアログが開き、キーボードで文字入力→配置（type:'text' {x,y,text,color,size}）。既存の文字はタップで
+       編集（空にすると削除）。キーボードはタップ操作内で同期 focus して確実に表示、入力は16px以上でiOSズーム回避。
+       描画は drawInkItem の text 分岐で fillText（複数行対応、色は現在のインク色、既定size36）。SEL_TYPESに'text'を
+       追加し、選択ツールで移動・削除・グループ化・コピペ・完全内包選択が可能（itemBBox=measureTextで実測、
+       itemVerts=4隅、moveItemBy/snapItemもtext対応）。手書きが苦手なWeb環境でも、文言ラベルは取りこぼしゼロで確実。
+       文字ツール中は1本指で画面を動かさない（誤操作防止）。編集ブロック中はロック表示。自動保存/選択に自然に載る。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -719,6 +729,9 @@
   .lock-btn.locked-on{background:#F5A524;color:#0E1218;border-color:#F5A524}
   .lock-btn.locked-on svg{color:#0E1218}
   .lock-pill{font-size:11px;font-weight:700;color:#0E1218;background:#F5A524;border-radius:6px;padding:2px 8px;white-space:nowrap;flex-shrink:0}
+  .text-input{width:100%;box-sizing:border-box;font-size:17px;line-height:1.4;font-family:var(--sans);color:var(--text);
+    background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:11px 13px;margin:12px 0;resize:vertical;min-height:56px;outline:none}
+  .text-input:focus{border-color:var(--signal)}
   .role-field.active{color:#7FE3C0} .role-drafter.active{color:#FBCF6E} .role-admin.active{color:#9DC2FF}
 
   .net-btn.online{color:var(--signal)} .net-btn.offline{color:var(--warn)}
@@ -1525,7 +1538,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.47 · 連続筆記の取りこぼし対策（rAF描画）</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.48 · 文字入力ツールを追加（手書きの取りこぼしを回避）</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -1641,6 +1654,10 @@
     <button class="dock-btn" id="btnPen">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18z"/><circle cx="11" cy="11" r="2"/></svg>
       ペン
+    </button>
+    <button class="dock-btn" id="btnText">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2M9 5v14M9 19H7m2 0h2"/></svg>
+      文字
     </button>
     <button class="dock-btn" id="btnShape">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="10" height="10" rx="1.5"/><circle cx="17.5" cy="17.5" r="5"/></svg>
@@ -2017,6 +2034,18 @@
     <div class="confirm-actions">
       <button class="btn-cancel" id="gcCancel">キャンセル</button>
       <button class="btn-primary" id="gcOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- 文字入力ダイアログ -->
+<div class="confirm-scrim" id="textScrim">
+  <div class="confirm-box" style="max-width:460px">
+    <h3 id="textTitle">文字を入力</h3>
+    <textarea id="textInput" class="text-input" rows="2" placeholder="ここに入力（例：カーテン）" autocomplete="off"></textarea>
+    <div class="confirm-actions">
+      <button class="btn-cancel" id="textCancel">キャンセル</button>
+      <button class="btn-primary" id="textOk">配置</button>
     </div>
   </div>
 </div>
@@ -2493,11 +2522,22 @@ function shapeBounds(item){
   return {x0:Math.min(item.x1,item.x2),x1:Math.max(item.x1,item.x2),y0:Math.min(item.y1,item.y2),y1:Math.max(item.y1,item.y2)};
 }
 /* ===== 範囲/自由選択（選択ツール）：図形＋ペン線を複数選択 ===== */
-const SEL_TYPES=['free','rect','ellipse','line','arrow','poly']; // 対象＝図形＋ペン（計測・ピンは対象外）
+const SEL_TYPES=['free','rect','ellipse','line','arrow','poly','text']; // 対象＝図形＋ペン＋文字（計測・ピンは対象外）
+const CANVAS_FONT='"IBM Plex Sans JP","IBM Plex Sans",system-ui,sans-serif';
+function textLines(item){ return String(item.text||'').split('\n'); }
+function textBBox(item){ // 文字の外接矩形（measureTextで実測）
+  const size=item.size||36;
+  ctx.save(); ctx.font=`600 ${size}px ${CANVAS_FONT}`;
+  let w=0; textLines(item).forEach(ln=>{ w=Math.max(w, ctx.measureText(ln||' ').width); });
+  ctx.restore();
+  const h=textLines(item).length*size*1.28;
+  return {x0:item.x, x1:item.x+Math.max(w,size*0.6), y0:item.y, y1:item.y+h};
+}
 let selMulti=[];   // 複数選択中のアイテム参照
 let selDraft=null; // 選択中のドラッグ（矩形/なげなわ）: {mode:'rect'|'lasso', x0,y0,x1,y1 or pts:[]}
 let selMoveOrig=null; // 移動中の元座標スナップショット
 function itemBBox(item){ // free も含めた外接矩形
+  if(item.type==='text') return textBBox(item);
   if(item.type==='free'||item.type==='poly'){
     const xs=item.pts.map(p=>p.x), ys=item.pts.map(p=>p.y);
     return {x0:Math.min(...xs),x1:Math.max(...xs),y0:Math.min(...ys),y1:Math.max(...ys)};
@@ -2507,7 +2547,7 @@ function itemBBox(item){ // free も含めた外接矩形
 function itemVerts(item){ // 「完全内包」判定に使う代表点
   if(item.type==='free'||item.type==='poly') return item.pts.map(p=>({x:p.x,y:p.y}));
   const b=itemBBox(item);
-  if(item.type==='rect'||item.type==='ellipse') return [{x:b.x0,y:b.y0},{x:b.x1,y:b.y0},{x:b.x1,y:b.y1},{x:b.x0,y:b.y1}];
+  if(item.type==='rect'||item.type==='ellipse'||item.type==='text') return [{x:b.x0,y:b.y0},{x:b.x1,y:b.y0},{x:b.x1,y:b.y1},{x:b.x0,y:b.y1}];
   return [{x:item.x1,y:item.y1},{x:item.x2,y:item.y2}]; // line / arrow
 }
 function pointInPoly(pt, poly){ // ray casting
@@ -2553,7 +2593,8 @@ function hitSelItem(pt){
     if(it.type==='free'){
       if(it.pts.length===1){ if(Math.hypot(pt.x-it.pts[0].x,pt.y-it.pts[0].y)<14) return it; }
       for(let j=0;j<it.pts.length-1;j++){ if(distToSegment(pt,it.pts[j].x,it.pts[j].y,it.pts[j+1].x,it.pts[j+1].y)<14) return it; }
-    } else if(pointInShapeBody(it,pt)) return it;
+    } else if(it.type==='text'){ const b=textBBox(it); if(pt.x>=b.x0-6&&pt.x<=b.x1+6&&pt.y>=b.y0-6&&pt.y<=b.y1+6) return it; }
+    else if(pointInShapeBody(it,pt)) return it;
   }
   return null;
 }
@@ -2613,9 +2654,10 @@ function pointInSelGroup(pt){
 function clearMultiSel(){ selMulti=[]; selDraft=null; selMoveOrig=null; }
 function moveItemBy(item, dx, dy, orig){
   if(item.type==='free'||item.type==='poly'){ item.pts.forEach((q,i)=>{ q.x=orig.pts[i].x+dx; q.y=orig.pts[i].y+dy; }); }
+  else if(item.type==='text'){ item.x=orig.x+dx; item.y=orig.y+dy; }
   else { item.x1=orig.x1+dx; item.y1=orig.y1+dy; item.x2=orig.x2+dx; item.y2=orig.y2+dy; }
 }
-function snapItem(item){ return (item.type==='free'||item.type==='poly') ? {pts:item.pts.map(q=>({x:q.x,y:q.y}))} : {x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2}; }
+function snapItem(item){ return (item.type==='free'||item.type==='poly') ? {pts:item.pts.map(q=>({x:q.x,y:q.y}))} : item.type==='text' ? {x:item.x,y:item.y} : {x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2}; }
 function hitTestShape(pt){
   const arr=strokes[inkKey()]||[];
   for(let i=arr.length-1;i>=0;i--){
@@ -2707,7 +2749,7 @@ vp.addEventListener('pointerdown',e=>{
   const drawTool = state.tool==='pen'||state.tool==='shape'||state.tool==='measure'||state.tool==='select';
   const drawable = drawTool && canPinEdit() && inputCanDraw;
   const pinPlacing = state.tool==='pin' && canPinEdit() && inputCanDraw; // ④ ピン設置中も1本指移動を無効化
-  if(pointers.size===1) panLock = (drawTool || state.tool==='pin') && canPinEdit(); // 作図/選択/ピン中は1本指（手のひら含む）で画面を動かさない（誤パン＝線が飛ぶのを防止）
+  if(pointers.size===1) panLock = (drawTool || state.tool==='pin' || state.tool==='text') && canPinEdit(); // 作図/選択/ピン/文字中は1本指（手のひら含む）で画面を動かさない
   const isPoly=state.tool==='shape' && state.shapeType==='poly';
   if(pointers.size===1 && polyDraft && !overSheet(e.clientX,e.clientY)){
     finishPoly(); polyPending=false; downInfo=null; return; // touching outside the drawing ends the line
@@ -2895,6 +2937,12 @@ function endPointer(e){
     const canPin=!!d0 && !!vv0 && state.role==='field' && vv0.status!=='superseded' && !(!state.online&&!d0.cached);
     if(canPin && overSheet(downInfo.x,downInfo.y)) placePin(toCanvas(downInfo.x,downInfo.y));
   }
+  // 文字ツール：タップで入力/編集（ドラッグは配置しない）
+  if(wasLast && downInfo && !downInfo.moved && state.tool==='text' && canPinEdit() && overSheet(downInfo.x,downInfo.y)){
+    const pt=toCanvas(downInfo.x,downInfo.y);
+    const hit=hitTextItem(pt);
+    openTextEditor(hit?null:pt, hit||null);
+  }
   // continuous line: commits a point at wherever the pointer is released — a plain tap
   // places it there directly; a press-drag-release lets the line "follow" first, then locks in
   if(wasLast && polyPending && state.tool==='shape' && state.shapeType==='poly'
@@ -2997,6 +3045,14 @@ function drawFreeStroke(c, item){
   c.lineWidth=freeW(base,p[n-1].p); c.beginPath(); c.moveTo(mn.x,mn.y); c.lineTo(p[n-1].x,p[n-1].y); c.stroke();
 }
 function drawInkItem(c, item, draftInfo){
+  if(item.type==='text'){
+    const size=item.size||36;
+    c.fillStyle=item.color||'#E5372A';
+    c.font=`600 ${size}px ${CANVAS_FONT}`;
+    c.textBaseline='top'; c.textAlign='left'; c.setLineDash([]);
+    textLines(item).forEach((ln,i)=>{ c.fillText(ln, item.x, item.y+i*size*1.28); });
+    return;
+  }
   c.strokeStyle=item.color||'#E5372A';
   c.lineWidth=item.width||3.5;
   c.setLineDash(item.dash?[Math.max(8,c.lineWidth*2.5),Math.max(6,c.lineWidth*1.8)]:[]);
@@ -3133,6 +3189,7 @@ function setTool(t){
   state.tool=t;
   $('#btnNav').classList.toggle('on',t==='nav');
   $('#btnPen').classList.toggle('on',t==='pen');
+  $('#btnText').classList.toggle('on',t==='text');
   $('#btnShape').classList.toggle('on',t==='shape');
   $('#btnPin').classList.toggle('on',t==='pin');
   $('#btnMeasure').classList.toggle('on',t==='measure');
@@ -3145,6 +3202,7 @@ function setTool(t){
   if(t==='pin')toast('ピン：図面タップで設置、ピンを長押し／ドラッグで移動','ok');
   if(t==='measure')toast('計測：2点をドラッグで実寸を表示。シフトで水平・垂直・45°に固定','ok');
   if(t==='select')toast('選択：囲んで図形・ペンを複数選択。選択をドラッグで移動、消しゴムで削除','ok');
+  if(t==='text')toast('文字：図面をタップしてキーボードで入力。既存の文字はタップで編集、移動・削除は「選択」ツールで','ok');
 }
 $('#btnNav').addEventListener('click',()=>setTool('nav'));
 $('#btnPen').addEventListener('click',()=>{
@@ -3237,6 +3295,12 @@ $('#btnMeasure').addEventListener('click',()=>{
 $('#btnSelect').addEventListener('click',()=>{
   const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('select');
 });
+$('#btnText').addEventListener('click',()=>{
+  const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('text');
+});
+$('#textOk').addEventListener('click',commitText);
+$('#textCancel').addEventListener('click',closeTextEditor);
+$('#textScrim').addEventListener('click',e=>{ if(e.target.id==='textScrim') closeTextEditor(); });
 $('#selModeRect').addEventListener('click',()=>{ state.selMode='rect'; selDraft=null; updateSelectBar(); });
 $('#selModeLasso').addEventListener('click',()=>{ state.selMode='lasso'; selDraft=null; updateSelectBar(); });
 $('#selGroup').addEventListener('click',groupSelection);
@@ -5273,6 +5337,7 @@ function renderViewer(){
   $('#btnPin').classList.toggle('locked',!canEdit);
   $('#btnMeasure').classList.toggle('locked',!canEdit);
   $('#btnSelect').classList.toggle('locked',!canEdit);
+  $('#btnText').classList.toggle('locked',!canEdit);
   if(!canEdit && state.tool!=='nav')setTool('nav');
   renderPins();
 }
@@ -5456,6 +5521,44 @@ function gConfirm({title,desc,ok,danger}){
 }
 
 /* ---- D. 閲覧ロック（見るだけモード）：全編集ジェスチャーを無効化 ---- */
+/* ===== 文字入力ツール ===== */
+let textTarget=null; // 編集中の既存textアイテム（新規はnull）
+let textPt=null;     // 新規配置位置（canvas座標）
+function hitTextItem(pt){
+  const arr=strokes[inkKey()]||[];
+  for(let i=arr.length-1;i>=0;i--){ const it=arr[i];
+    if(it.type!=='text') continue;
+    const b=textBBox(it);
+    if(pt.x>=b.x0-6&&pt.x<=b.x1+6&&pt.y>=b.y0-6&&pt.y<=b.y1+6) return it;
+  }
+  return null;
+}
+function openTextEditor(pt, existing){
+  textTarget=existing||null; textPt=pt||null;
+  $('#textTitle').textContent = existing? '文字を編集' : '文字を入力';
+  $('#textOk').textContent = existing? '更新' : '配置';
+  const t=$('#textInput'); t.value = existing? existing.text : '';
+  $('#textScrim').classList.add('show');
+  t.focus(); // タップ操作の中で同期的にフォーカス＝iOSでキーボードが出る
+  try{ t.setSelectionRange(t.value.length,t.value.length); }catch(_){}
+}
+function closeTextEditor(){ $('#textScrim').classList.remove('show'); $('#textInput').blur(); textTarget=null; textPt=null; }
+function commitText(){
+  const val=$('#textInput').value.replace(/[ \t]+$/,'').replace(/\n+$/,'');
+  if(textTarget){
+    beginInkTxn();
+    if(val){ textTarget.text=val; }
+    else { const arr=strokes[inkKey()]||[]; const i=arr.indexOf(textTarget); if(i>-1) arr.splice(i,1); } // 空にしたら削除
+    redrawInk(); commitInkTxn();
+  } else if(val && textPt){
+    beginInkTxn();
+    const item={type:'text', x:textPt.x, y:textPt.y, text:val, color:state.inkColor, size:36};
+    (strokes[inkKey()]=strokes[inkKey()]||[]).push(item);
+    redrawInk(); commitInkTxn();
+    toast('文字を配置しました。「選択」ツールで移動・削除できます','ok');
+  }
+  closeTextEditor();
+}
 function setViewLock(on){
   state.viewLock=on;
   $('#btnLock').classList.toggle('locked-on',on);

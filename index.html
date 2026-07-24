@@ -610,6 +610,24 @@
           点の可変太さ描画は区間ごとに stroke するため、非常に長い1ストロークではライブが重くなる余地あり
           （必要なら現在ストロークの増分描画に最適化）。
 -->
+
+<!--
+  build v7.44 (修正：ペンシルを使うと指で描けなくなる)  — 従来は「セッション中に一度でもペンシルを使うと(penSeen)
+       以降ずっと指＝移動/ズーム専用」にしていたため、ペンシル使用後は指で触れても無反応・無メッセージだった。
+       これを近接ベースのパームリジェクションに変更：ペンが触れている間(penDown)＋離してから PEN_GRACE(450ms) の
+       間だけ指を無視し、それ以降は指で描ける（lastPenTs で判定、pen の pointerdown/pointerup/cancel で更新）。
+       あわせて、ペンが割り込んだ瞬間に手のひらが描き始めていたストロークは strokes から取り除き履歴にも残さない
+       （cancelInkTxn＋pop）。これで「書いている間は手のひら無視／ペンを止めれば指で描ける」が両立する。
+-->
+
+<!--
+  build v7.45 (修正：ペンで連続して書くと反応が悪くなる)  — v7.42/43で、ペンを下ろすたびに buildBgCache() で
+       「確定済み全ストローク」をオフスクリーンへ描き直していた。可変太さ描画(v7.43)は区間ごとに stroke するため
+       重く、線が増えるほど各ストローク開始のコストが累積し、連続筆記でペンの反応が悪化していた。
+       対応：キャッシュ更新を「pointerdownのたび」から「redrawInk のたび（確定済みが変わる離散イベント時）」に移動。
+       redrawInk 内で確定済みストロークを描いた直後に main→bgCanvas をビットマップコピー（curItem が無いときのみ）。
+       ペン描画中は drawFreeLive が直近キャッシュ＋描いている線だけを合成するので、各ストローク開始のコストがほぼ一定に。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1489,7 +1507,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.43 · ペンの書き味をGoodNotes寄せ（予測点・筆圧・なめらか化）</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.45 · 修正：ペンで連続して書くと反応が悪い</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -2645,25 +2663,29 @@ function toCanvas(cx,cy){const r=canvas.getBoundingClientRect();return{x:(cx-r.l
 
 let downInfo=null;
 let panLock=false; // 作図ツール中は1本指で画面を動かさない（移動は必ず2本指）
-let penSeen=false; // このセッションで Apple Pencil を使ったか（使用後は指＝移動/ズーム専用）
+let lastPenTs=0; const PEN_GRACE=450; // 直近にペンシルを使った時刻。ペン中＋直後の一瞬だけ指を無視し、以降は指で描ける
 function penDown(){ for(const p of pointers.values()) if(p.type==='pen') return true; return false; }
 vp.addEventListener('pointerdown',e=>{
   if(e.target.closest('.dock,.hint-chip,.tool-panel,.pin,.measure-bar'))return;
   // ① パームリジェクション：Apple Pencil が触れている間は指タッチを一切拾わない（手のひら・指の誤描画/誤移動を防止）
   if(e.pointerType==='touch' && penDown()) return;
   if(e.pointerType==='pen'){
-    penSeen=true;
+    lastPenTs=Date.now();
     // ペンが下りたら既存の指タッチ（手のひら等）を破棄し、ペンを最優先にする
     if(pointers.size){
       for(const id of [...pointers.keys()]){ try{vp.releasePointerCapture(id);}catch(_){}}
+      // 手のひらが描き始めていたストロークは残さない（履歴にも入れない）
+      if(curItem){ const arr=strokes[inkKey()]; if(arr&&arr[arr.length-1]===curItem)arr.pop(); }
+      cancelInkTxn();
       pointers.clear(); gesture=null; curItem=null; downInfo=null; polyPending=false; hoverPt=null;
     }
   }
   vp.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,type:e.pointerType});
   if(pointers.size===1) downInfo={x:e.clientX,y:e.clientY,moved:false};
-  // 指で描ける/ピンを刺せるのは「ペンシル未使用のセッション」のみ。ペンシル使用後は指＝移動/ズーム専用。
-  const inputCanDraw = e.pointerType!=='touch' || !penSeen;
+  // 指で描ける/ピンを刺せるのは「ペンシルが触れていない かつ 直近(PEN_GRACE)にペンを使っていない」とき。
+  // ＝ペンシル利用中〜直後は手のひらを無視し、ペンシルを止めれば指で描ける。
+  const inputCanDraw = e.pointerType!=='touch' || (Date.now()-lastPenTs > PEN_GRACE);
   const drawTool = state.tool==='pen'||state.tool==='shape'||state.tool==='measure'||state.tool==='select';
   const drawable = drawTool && canPinEdit() && inputCanDraw;
   const pinPlacing = state.tool==='pin' && canPinEdit() && inputCanDraw; // ④ ピン設置中も1本指移動を無効化
@@ -2695,7 +2717,7 @@ vp.addEventListener('pointerdown',e=>{
     predictTail=[];
     (strokes[inkKey()]=strokes[inkKey()]||[]).push(curItem);
     redoStrokes[inkKey()]=[];
-    buildBgCache(); drawFreeLive(); // 確定済みをキャッシュ化し、描き始めの1点を即描画（以降は追記合成のみ）
+    drawFreeLive(); // 直近の再描画で作った確定済みキャッシュに、描き始めの1点を重ねる（毎回の全再描画をしない）
   } else if(pointers.size===1 && drawable && state.tool==='measure' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
     curItem={type:'measure', x1:pt.x, y1:pt.y, x2:pt.x, y2:pt.y, color:MEASURE_COLOR, width:2};
@@ -2822,6 +2844,7 @@ vp.addEventListener('pointermove',e=>{
 function endPointer(e){
   if(!pointers.has(e.pointerId))return;
   const wasLast=pointers.size===1;
+  if(pointers.get(e.pointerId) && pointers.get(e.pointerId).type==='pen') lastPenTs=Date.now(); // ペンを離した時刻（指の猶予はここから）
   pointers.delete(e.pointerId);
   if(penErasing){ penErasing=false; } // なぞり消去の終了
   if(dragMode){ dragMode=null; redrawInk(); }
@@ -3008,6 +3031,10 @@ function redrawInk(){
   if(selMulti.length) selMulti=selMulti.filter(it=>list.includes(it)); // 消えたものは選択から外す
   const draftInfo={item:polyDraft, hoverPt:hoverPt};
   list.forEach(item=>drawInkItem(ctx,item,draftInfo));
+  if(!curItem){ // 確定済みストロークだけをキャッシュ（ペン描画中の高速合成に使う。選択枠などは含めない）
+    if(bgCanvas.width!==CW||bgCanvas.height!==CH){ bgCanvas.width=CW; bgCanvas.height=CH; }
+    bgCtx.clearRect(0,0,CW,CH); bgCtx.drawImage(canvas,0,0);
+  }
   if(selectedItem){
     ctx.save();
     ctx.strokeStyle='#3B82F6'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);

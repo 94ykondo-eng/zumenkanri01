@@ -597,6 +597,19 @@
           「作図系ツール＋編集可」で有効化。ペン先が触れる前に手のひらでキャンバスがずれる（＝線が飛ぶ）のを防ぐ。
           移動は従来どおり2本指。
 -->
+
+<!--
+  build v7.43 (ペンの書き味をGoodNotes寄せに：予測点・筆圧・なめらか化)  —
+       A. 予測点（getPredictedEvents）：ペンがこの後行く点を先読みして描画（predictTail）。実点に置き換わるまでの
+          先読み表示で「線がペンに遅れてついてくる」もたつきを軽減。確定はしない（実点のみ保存）。
+       B. 筆圧：free の各点に p（e.pressure）を保存し、線幅を base の 0.4〜1.6倍で可変に（freeW）。入り・抜きが
+          自然になり手書きらしい見た目に。旧データ（p無し）は 0.5＝base相当で従来どおり。破線は太さ一定にフォールバック。
+       C. なめらか化：free 描画を drawFreeStroke に集約。中点法（隣接点の中点を通す二次ベジェ）で滑らかにしつつ、
+          区間ごとにその点の筆圧で太さを変える。drawInkItem の free もこれを使うのでキャッシュ/ライブ/確定で一貫。
+       ※Safari（Web）である以上ネイティブ（PencilKit）並みの極小遅延には届かないが、体感は改善するはず。
+          点の可変太さ描画は区間ごとに stroke するため、非常に長い1ストロークではライブが重くなる余地あり
+          （必要なら現在ストロークの増分描画に最適化）。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1476,7 +1489,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.42 · Apple Pencilの書き味改善（キャッシュ合成・誤パン防止）</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.43 · ペンの書き味をGoodNotes寄せ（予測点・筆圧・なめらか化）</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -2678,7 +2691,8 @@ vp.addEventListener('pointerdown',e=>{
     const pt=toCanvas(e.clientX,e.clientY);
     if(penEraseMode){ penErasing=true; eraseInkAt(pt); return; } // なぞり消去（描画しない）
     const style={color:state.inkColor,width:state.inkWidth,dash:state.inkDash,fill:state.inkFill};
-    curItem={type:'free', pts:[pt], ...style};
+    curItem={type:'free', pts:[{x:pt.x,y:pt.y,p: e.pressure>0?e.pressure:0.5}], ...style};
+    predictTail=[];
     (strokes[inkKey()]=strokes[inkKey()]||[]).push(curItem);
     redoStrokes[inkKey()]=[];
     buildBgCache(); drawFreeLive(); // 確定済みをキャッシュ化し、描き始めの1点を即描画（以降は追記合成のみ）
@@ -2755,13 +2769,17 @@ vp.addEventListener('pointermove',e=>{
   if(curItem){
     const pt=toCanvas(e.clientX,e.clientY);
     if(curItem.type==='free'){
-      // Apple Pencil の間引かれた中間点も拾う（図面の朱書きも滑らかに）
+      // Apple Pencil の間引かれた中間点＋筆圧を拾う
       const evs = (typeof e.getCoalescedEvents==='function') ? e.getCoalescedEvents() : null;
       if(evs && evs.length){
-        for(const ce of evs){ curItem.pts.push(toCanvas(ce.clientX,ce.clientY)); }
+        for(const ce of evs){ const cp=toCanvas(ce.clientX,ce.clientY); curItem.pts.push({x:cp.x,y:cp.y,p: ce.pressure>0?ce.pressure:0.5}); }
       } else {
-        curItem.pts.push(pt);
+        curItem.pts.push({x:pt.x,y:pt.y,p: e.pressure>0?e.pressure:0.5});
       }
+      // A: 予測点（この後ペンが行く点）を先読みして描く＝追従性UP。確定はしない（次のmoveで実点に置き換わる）
+      predictTail=[];
+      const pev = (typeof e.getPredictedEvents==='function') ? e.getPredictedEvents() : null;
+      if(pev){ for(const pe of pev){ const cp=toCanvas(pe.clientX,pe.clientY); predictTail.push({x:cp.x,y:cp.y,p: pe.pressure>0?pe.pressure:0.5}); } }
       drawFreeLive(); return; // キャッシュ＋描いている線だけ合成（全ストローク再描画しない＝カクつき防止）
     } else if(curItem.type==='rect'||curItem.type==='ellipse'){
       if(effectiveShift()){
@@ -2907,36 +2925,42 @@ function refreshInkBtns(){
 }
 // 1つの注釈アイテムを任意のcanvas contextに描く（図面・写真注釈で共用）。
 // polyのラバーバンド（描画中プレビュー）は draftInfo で受け取る。
+let predictTail=[]; // A: 予測点（getPredictedEvents）の一時タyル。描画中のみ表示し確定はしない
+// 筆圧→線幅（base の 0.4〜1.6倍）。p が無い旧データは 0.5 扱い＝base相当。
+function freeW(base, pr){ pr=(pr==null?0.5:Math.max(0,Math.min(1,pr))); return base*(0.4+1.2*pr); }
+// B+C: 筆圧で太さが変わり、中点法で滑らかなペン線を描く（GoodNotes寄せ）
+function drawFreeStroke(c, item){
+  const p=item.pts, base=item.width||3.5, col=item.color||'#E5372A';
+  if(!p||!p.length) return;
+  c.strokeStyle=col; c.fillStyle=col; c.lineCap='round'; c.lineJoin='round';
+  c.setLineDash(item.dash?[Math.max(8,base*2.5),Math.max(6,base*1.8)]:[]);
+  if(p.length===1){ c.beginPath(); c.arc(p[0].x,p[0].y,Math.max(0.8,freeW(base,p[0].p)/2),0,Math.PI*2); c.fill(); return; }
+  if(item.dash){ // 破線は太さ一定（破線×可変太さは見栄えが悪い）
+    c.lineWidth=base; c.beginPath(); c.moveTo(p[0].x,p[0].y);
+    for(let i=1;i<p.length;i++) c.lineTo(p[i].x,p[i].y);
+    c.stroke(); return;
+  }
+  if(p.length===2){ c.lineWidth=freeW(base,((p[0].p)+(p[1].p))/2||0.5); c.beginPath(); c.moveTo(p[0].x,p[0].y); c.lineTo(p[1].x,p[1].y); c.stroke(); return; }
+  // 先頭 p0→中点
+  const m0={x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2};
+  c.lineWidth=freeW(base,p[0].p); c.beginPath(); c.moveTo(p[0].x,p[0].y); c.lineTo(m0.x,m0.y); c.stroke();
+  // 中間：中点→中点を二次ベジェ、太さはその点の筆圧
+  for(let i=1;i<p.length-1;i++){
+    const a=p[i-1], b=p[i], nx=p[i+1];
+    const m1={x:(a.x+b.x)/2,y:(a.y+b.y)/2}, m2={x:(b.x+nx.x)/2,y:(b.y+nx.y)/2};
+    c.lineWidth=freeW(base,b.p);
+    c.beginPath(); c.moveTo(m1.x,m1.y); c.quadraticCurveTo(b.x,b.y,m2.x,m2.y); c.stroke();
+  }
+  // 末尾 中点→p[n-1]
+  const n=p.length, mn={x:(p[n-2].x+p[n-1].x)/2,y:(p[n-2].y+p[n-1].y)/2};
+  c.lineWidth=freeW(base,p[n-1].p); c.beginPath(); c.moveTo(mn.x,mn.y); c.lineTo(p[n-1].x,p[n-1].y); c.stroke();
+}
 function drawInkItem(c, item, draftInfo){
   c.strokeStyle=item.color||'#E5372A';
   c.lineWidth=item.width||3.5;
   c.setLineDash(item.dash?[Math.max(8,c.lineWidth*2.5),Math.max(6,c.lineWidth*1.8)]:[]);
   if(item.type==='free'){
-    const p=item.pts;
-    if(p.length===1){
-      // 1点だけ（ペンを下ろした瞬間・点打ち）→ 線幅の円を塗って「点」として見せる
-      c.beginPath();
-      c.arc(p[0].x,p[0].y,Math.max(0.8,(item.width||3.5)/2),0,Math.PI*2);
-      c.fillStyle=item.color||'#E5372A';
-      c.fill();
-      return;
-    }
-    c.beginPath();
-    if(p.length<3){
-      // 点が少ないときは直線で
-      p.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));
-    } else {
-      // 中点法：各点を制御点にし、隣り合う点の中点を通る二次ベジェ曲線で結ぶ。
-      // 少ない点でもカクつかず滑らかな曲線になる（手描きアプリで定番）。
-      c.moveTo(p[0].x,p[0].y);
-      for(let i=1;i<p.length-1;i++){
-        const mx=(p[i].x+p[i+1].x)/2, my=(p[i].y+p[i+1].y)/2;
-        c.quadraticCurveTo(p[i].x,p[i].y,mx,my);
-      }
-      // 最後の点まで結ぶ
-      c.quadraticCurveTo(p[p.length-2].x,p[p.length-2].y,p[p.length-1].x,p[p.length-1].y);
-    }
-    c.stroke();
+    drawFreeStroke(c, item);
   } else if(item.type==='rect'){
     const rx=Math.min(item.x1,item.x2), ry=Math.min(item.y1,item.y2), rw=Math.abs(item.x2-item.x1), rh=Math.abs(item.y2-item.y1);
     if(item.fill){ c.fillStyle=hexToRgba(item.color||'#E5372A',0.28); c.fillRect(rx,ry,rw,rh); }
@@ -3038,7 +3062,14 @@ function drawFreeLive(){
   ctx.clearRect(0,0,CW,CH);
   ctx.drawImage(bgCanvas,0,0);                 // 確定済み（キャッシュ）
   ctx.lineCap='round'; ctx.lineJoin='round';
-  if(curItem) drawInkItem(ctx, curItem, {item:polyDraft, hoverPt:hoverPt}); // 描いている線だけ
+  if(curItem){
+    if(curItem.type==='free' && predictTail.length){
+      // 実点＋予測点をつなげて描く（予測分は次フレームで実点に置き換わる）
+      drawFreeStroke(ctx, {type:'free', color:curItem.color, width:curItem.width, dash:curItem.dash, pts:curItem.pts.concat(predictTail)});
+    } else {
+      drawInkItem(ctx, curItem, {item:polyDraft, hoverPt:hoverPt}); // 描いている線だけ
+    }
+  }
 }
 function setTool(t){
   if(t!=='shape' && polyDraft) finishPoly();

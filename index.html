@@ -628,6 +628,24 @@
        redrawInk 内で確定済みストロークを描いた直後に main→bgCanvas をビットマップコピー（curItem が無いときのみ）。
        ペン描画中は drawFreeLive が直近キャッシュ＋描いている線だけを合成するので、各ストローク開始のコストがほぼ一定に。
 -->
+
+<!--
+  build v7.46 (修正：字を書くとき画数が多いと画（ストローク）が消える)  — 「ペン先が画面を何度も離れる＝画数の多い字」で
+       一部の画が読み取られない症状。原因は v7.44 でペン割り込み時に「描きかけストロークを strokes から pop＋
+       cancelInkTxn」していたこと。素早くペンを下ろし直すと（字の画と画の間）、前の画の pointerup 処理前に次の
+       pointerdown が来て purge が走り、前の画を巻き添えで破棄していた。対応：purge では描きかけを【捨てず確定
+       （commitInkTxn）して残す】ように変更。近接パームリジェクション(v7.44)により手のひらの描き始めは基本生じない
+       ため、破棄をやめてもマーク混入は起きにくい。これで連続筆記で画が消えない。
+-->
+
+<!--
+  build v7.47 (連続筆記の取りこぼし対策：描画をrAFにまとめる)  — 画数の多い字でペン先が何度も着地/離れする際、
+       Safariが素早い接触の一部を取りこぼす問題への追加対策。描画中の再描画を「pointermoveのたび」から
+       「requestAnimationFrame（1フレーム1回）」にまとめた（scheduleFreeDraw）。pointermoveでは座標を貯めるだけにして
+       主スレッドを空け、ペンの着地/離れ(pointerdown/up)の処理を最優先化＝取りこぼしを減らす。点の取得は毎イベントで
+       行うので線の解像度は落ちない。※Web(Safari)である以上ネイティブ(PencilKit)並みに全接触を拾うのは原理的に困難で、
+       主スレッド負荷を下げて改善を狙う方針。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1507,7 +1525,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.45 · 修正：ペンで連続して書くと反応が悪い</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.47 · 連続筆記の取りこぼし対策（rAF描画）</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -2674,9 +2692,9 @@ vp.addEventListener('pointerdown',e=>{
     // ペンが下りたら既存の指タッチ（手のひら等）を破棄し、ペンを最優先にする
     if(pointers.size){
       for(const id of [...pointers.keys()]){ try{vp.releasePointerCapture(id);}catch(_){}}
-      // 手のひらが描き始めていたストロークは残さない（履歴にも入れない）
-      if(curItem){ const arr=strokes[inkKey()]; if(arr&&arr[arr.length-1]===curItem)arr.pop(); }
-      cancelInkTxn();
+      // 描きかけのストロークは【捨てずに確定して残す】。素早くペンを下ろし直したとき（字の画と画の間）に
+      // 前の画が巻き添えで消えるのを防ぐ。手のひらの描き始めも近接パームリジェクションで基本的に生じない。
+      if(curItem){ curItem=null; commitInkTxn(); } else { cancelInkTxn(); }
       pointers.clear(); gesture=null; curItem=null; downInfo=null; polyPending=false; hoverPt=null;
     }
   }
@@ -2802,7 +2820,7 @@ vp.addEventListener('pointermove',e=>{
       predictTail=[];
       const pev = (typeof e.getPredictedEvents==='function') ? e.getPredictedEvents() : null;
       if(pev){ for(const pe of pev){ const cp=toCanvas(pe.clientX,pe.clientY); predictTail.push({x:cp.x,y:cp.y,p: pe.pressure>0?pe.pressure:0.5}); } }
-      drawFreeLive(); return; // キャッシュ＋描いている線だけ合成（全ストローク再描画しない＝カクつき防止）
+      scheduleFreeDraw(); return; // 描画は1フレーム1回にまとめ、入力(ペンの着地/離れ)の取りこぼしを減らす
     } else if(curItem.type==='rect'||curItem.type==='ellipse'){
       if(effectiveShift()){
         const dx=pt.x-curItem.x1, dy=pt.y-curItem.y1;
@@ -3083,6 +3101,14 @@ function buildBgCache(){
   const list=strokes[inkKey()]||[];
   const draftInfo={item:polyDraft, hoverPt:hoverPt};
   list.forEach(it=>{ if(it!==curItem) drawInkItem(bgCtx, it, draftInfo); }); // 描いている線(curItem)以外を焼き込む
+}
+let freeDrawScheduled=false;
+// 描画中の再描画を1フレーム1回にまとめる。pointermoveでは点を貯めるだけにして、実描画はrAFで行う
+// ＝入力イベント(ペンの着地/離れ)の処理を詰まらせず、素早い連続筆記でのストローク欠落を減らす。
+function scheduleFreeDraw(){
+  if(freeDrawScheduled) return;
+  freeDrawScheduled=true;
+  requestAnimationFrame(()=>{ freeDrawScheduled=false; if(curItem && curItem.type==='free') drawFreeLive(); });
 }
 function drawFreeLive(){
   if(canvas.width!==CW||canvas.height!==CH){ canvas.width=CW; canvas.height=CH; }

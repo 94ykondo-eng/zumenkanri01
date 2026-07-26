@@ -768,6 +768,51 @@
        列幅=size*1.4、字送り=size*1.05）。横書きは従来どおり左揃え・上ベースライン。textBBox も縦書き対応（列数×列幅、
        最大文字数×字送り）＝当たり判定・選択・移動も正しく追従。図面・写真編集の両方で有効。新規/編集の commitText で保存。
 -->
+
+<!--
+  build v7.64 (現場/作図の役割を統合＝1画面に)  — 役割トグル(現場/作図)を廃止し、1つの画面に統合。①上部の役割セグメント
+       を撤去 ②editBlockReason から役割チェックを削除（＝いつでもペン・図形・文字・シンボル・ピンで描ける。ロック要因は
+       閲覧ロック/オフライン未保存/旧版のみ）③ピン設置・新規版バッジの role 条件を除去 ④版管理UI（図面の投入→仮登録→
+       公開）を役割ゲート無しで常時表示（見出しを「図面の投入・版管理」に）⑤公開は従来どおり gConfirm で確認 ⑥setRole/
+       復元は field 固定に無害化。これで「作図モードだと描けない・無反応」という混乱が解消。※.role-seg のCSSは未使用として残置。
+-->
+
+<!--
+  build v7.65 (オンライン/オフライン切替ボタンを削除＝常時オンライン扱い)  — 実際の通信状態と連動しない手動トグルで、
+       誤って「切断」にすると未保存図面が開けなくなる事故要因だったため撤去。#netBtn ボタンとそのクリックハンドラを削除。
+       state.online は既定 true のまま（保存/復元もしない）＝オフライン判定(!online&&!cached)は常に成立せず全図面が使える。
+       オフライン関連のロジック自体は残置（将来 navigator.onLine による自動判定に差し替え可能）。
+-->
+
+<!--
+  build v7.66 (修正：図面・写真・文字パレットに赤が2つ)  — INK_COLORS=['#E5372A',...COLORS] で、COLORS内の#F04438(赤)が
+       朱色#E5372A(ペン既定)と重複し「赤が2つ」に見えていた。INK_COLORS を COLORS.filter(c=>c!=='#F04438') に変更し、
+       インク/図形/文字パレットからは重複赤を除外（赤は#E5372Aの1つ）。ピンのパレット(COLORS)は従来どおり#F04438を保持。
+-->
+
+<!--
+  build v7.67 (写真の下に撮影日時を表示)  — ピンの写真グリッド(renderPhotoGrid)の各サムネイル下部に撮影日時を表示。
+       写真追加時(台帳の枠から/ピンシートから)に ledgerPhotoMeta[src].ts に ISO 日時を記録。photoTimeLabel(src) で
+       ts→「M/D HH:MM」、無ければ regDate→「M/D」、それも無ければ空。各 .photo-cell に .photo-date（下部の半透明バー）
+       をオーバーレイ表示。既存写真は ts が無いため regDate（日付）を表示、以後の新規写真は時刻付き。
+-->
+
+<!--
+  build v7.68 (撮影日時を「枠の下」に移動：書き込みボタンとの重なり解消)  — v7.67 で日時をサムネイル下部にオーバーレイ
+       していたため、右下の「書き込み」ボタンと重なった。各写真セルを .photo-item（縦並び）で包み、.photo-date を枠の
+       "外・下"にキャプションとして配置（オーバーレイ廃止）。日時が無いセルは「—」を表示して高さ・整列を揃える。
+       未撮影セルも .photo-item で統一。data-pinshoot ハンドラは属性ベースのため影響なし。
+-->
+
+<!--
+  build v7.69 (ピンの写真に「区分（フェーズ）」を追加＝同じ場所で目的別に分けて保存)  — 同じピン(場所)の写真を
+       調査／工事前／工事後 のような区分で分けて管理できるように。区分はピンごとに自由：p.groups=[{id,name}]（既定で
+       調査/工事前/工事後を用意、ヘッダ「区分を追加」で追加、各セクションで改名・削除）。写真は p.photoGroup{src→区分ID}
+       で対応（未設定＝未分類）。renderPhotoGrid を区分セクション表示に刷新：各区分ごとに 見出し＋写真グリッド＋「＋写真」
+       （その区分へ追加）。写真左上のセレクトで区分を移動。未撮影枠・未設定写真は「未分類」セクション。区分削除時は中の
+       写真を未分類へ退避（写真は消えない）。既存の「施工状況(前/中/後)」はそのまま併存。区分IDは時刻ベースで再読込後も
+       衝突しない。#photoGrid はブロック化し内側の .photo-grid をグリッドに。pins に載るため保存/復元も自動。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1237,6 +1282,18 @@
   .ph-btn.add{background:linear-gradient(180deg,var(--signal),var(--signal-dim));color:var(--signal-ink)}
   .ph-btn:active{transform:scale(.96)}
   .photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px;margin-bottom:18px;min-height:8px}
+  #photoGrid{display:block;margin-bottom:0}
+  .pg-section{margin-bottom:16px}
+  .pg-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+  .pg-name{font-size:13px;font-weight:700;color:var(--text)}
+  .pg-tools{display:flex;gap:6px;align-items:center;flex-shrink:0}
+  .pg-mini{font-size:11px;padding:4px 9px;border-radius:7px;background:var(--panel2);border:1px solid var(--line2);color:var(--muted)}
+  .pg-add{font-size:11px;font-weight:700;padding:5px 11px;border-radius:7px;background:var(--panel3);border:1px solid var(--signal);color:#fff}
+  .pg-mini:active,.pg-add:active{transform:scale(.95)}
+  .pg-empty{grid-column:1/-1;font-size:12px;color:var(--muted);padding:4px 2px}
+  .photo-gsel{position:absolute;left:5px;top:5px;max-width:66%;font-size:10px;font-weight:600;color:#fff;
+    background:rgba(10,14,20,.8);border:1px solid var(--line2);border-radius:7px;padding:3px 5px;
+    appearance:none;-webkit-appearance:none}
   .photo-cell{position:relative;aspect-ratio:4/3;border-radius:12px;overflow:hidden;background:var(--panel2);border:1px solid var(--line)}
   .photo-cell img{width:100%;height:100%;object-fit:cover;display:block}
   .photo-cell .rm{position:absolute;top:5px;right:5px;width:26px;height:26px;border-radius:8px;background:rgba(10,14,20,.8);
@@ -1247,6 +1304,8 @@
   .photo-anno svg{width:16px;height:16px;pointer-events:none}
   .photo-anno:active{transform:scale(.9);background:var(--signal);color:var(--signal-ink)}
   .photo-anno.has{background:var(--signal);color:var(--signal-ink);border-color:var(--signal)}
+  .photo-item{display:flex;flex-direction:column;gap:4px}
+  .photo-date{font-size:11px;font-weight:600;color:var(--muted);text-align:center;line-height:1.2;white-space:nowrap;letter-spacing:.02em}
   .photo-cell.empty{border-style:dashed;border-color:var(--line2);cursor:pointer;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:8px 6px}
   .photo-cell.empty:active{background:var(--panel3)}
@@ -1658,14 +1717,6 @@
 
   <div class="tb-spacer"></div>
 
-  <div class="role-seg" id="roleSeg">
-    <button class="role-field active" data-role="field"><span class="d"></span><span class="txt">現場</span></button>
-    <button class="role-drafter" data-role="drafter"><span class="d"></span><span class="txt">作図</span></button>
-  </div>
-  <button class="icon-btn net-btn online" id="netBtn">
-    <svg id="netIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0114 0M8.5 16.1a6 6 0 017 0M12 20h.01M2 8.82a15 15 0 0120 0"/></svg>
-    <span class="netlbl" id="netStatus">接続</span>
-  </button>
   <button class="icon-btn lock-btn" id="btnLock" title="閲覧ロック（見るだけモード）">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
   </button>
@@ -1680,7 +1731,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.63 · 文字の縦書き/横書き対応</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.69 · ピンの写真に「区分（調査/工事前/後）」を追加</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -1965,7 +2016,7 @@
   <div class="photos-head">
     <span>写真 <b id="photoCount">0</b> 枚</span>
     <div class="ph-actions">
-      <button class="ph-btn add" id="btnAddPhoto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>写真を追加</button>
+      <button class="ph-btn add" id="btnAddPhoto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2zM12 11v4M10 13h4"/></svg>区分を追加</button>
     </div>
   </div>
   <div class="photo-grid" id="photoGrid"></div>
@@ -2430,7 +2481,7 @@ const ICONS={
 };
 const ICON_ORDER=['equip','wiring','terminal','defect','done','camera','flag','wrench','bolt','plug','gauge','star','question','box'];
 const COLORS=['#3B82F6','#22C48A','#F5A524','#F04438','#8B93A5','#A78BFA','#F472B6','#2DD4BF','#FB923C','#6366F1'];
-const INK_COLORS=['#E5372A',...COLORS];
+const INK_COLORS=['#E5372A',...COLORS.filter(c=>c!=='#F04438')]; // ペン/図形/文字：朱色(#E5372A)と重複する赤(#F04438)は除外
 const TEXT_COLORS=['#111827',...INK_COLORS]; // 文字用：黒を先頭に追加
 const SHAPE_ICON_PATHS={
   rect:'<rect x="4" y="4" width="16" height="16" rx="1.5"/>',
@@ -2461,6 +2512,19 @@ function planArr(dwgId,pinId){
 function newSlot(status){ return {id:'k'+(++slotSeq), src:null, name:'', meta:{status:status||'', place:'', lines:[''], regDate:''}}; }
 // ピンの操作ログ（撮影／更新／削除）。事前に名前付きの枠があれば、その名前をラベルに使う。
 function pinLog(p,action,label){ (p.log=p.log||[]).push({time:new Date().toISOString(), action, label:label||'写真'}); }
+function photoTimeLabel(src){ // 写真の撮影日時ラベル（ts=日時、無ければregDate=日付）
+  const m=ledgerPhotoMeta[src];
+  if(m && m.ts){ const d=new Date(m.ts); if(!isNaN(d)) return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
+  if(m && m.regDate){ const p=String(m.regDate).split('-'); if(p.length===3) return `${+p[1]}/${+p[2]}`; }
+  return '';
+}
+// ピンの写真「区分（フェーズ）」：ピンごとに自由に追加・改名・削除。写真は src→区分ID で対応（未設定＝未分類）
+let groupSeq=0;
+function newGid(){ return 'g'+Date.now().toString(36)+(++groupSeq).toString(36); } // 再読込後も衝突しない一意ID
+function pinGroups(p){ if(!p.groups||!p.groups.length){ p.groups=[{id:newGid(),name:'調査'},{id:newGid(),name:'工事前'},{id:newGid(),name:'工事後'}]; } return p.groups; }
+function photoGid(p,src){ return (p.photoGroup||{})[src]||null; }
+function setPhotoGid(p,src,gid){ p.photoGroup=p.photoGroup||{}; if(gid) p.photoGroup[src]=gid; else delete p.photoGroup[src]; }
+let pinPhotoTargetGid=null; // 「＋写真」を押した区分（追加時の割当先）
 function slotForSrc(dwgId,pinId,src){
   const arr=(ledgerPlan[dwgId]&&ledgerPlan[dwgId][pinId])||[];
   return arr.find(s=>s.src===src)||null;
@@ -3128,7 +3192,7 @@ function endPointer(e){
   // pin placement: single clean tap while pin tool active
   if(wasLast && downInfo && !downInfo.moved && state.tool==='pin'){
     const d0=dwg(), vv0=viewingVerObj();
-    const canPin=!!d0 && !!vv0 && state.role==='field' && vv0.status!=='superseded' && !(!state.online&&!d0.cached);
+    const canPin=!!d0 && !!vv0 && vv0.status!=='superseded' && !(!state.online&&!d0.cached);
     if(canPin && overSheet(downInfo.x,downInfo.y)) placePin(toCanvas(downInfo.x,downInfo.y));
   }
   // 文字ツール：タップで入力/編集（ドラッグは配置しない）
@@ -3936,6 +4000,7 @@ $('#slotPhotoInput').addEventListener('change',e=>{
     p.photos.push(r.result);
     const sl=planArr(ledgerDwgId,p.id).find(x=>x.id===t.slot);
     bindPhotoToSlot(ledgerDwgId,p.id,t.slot,r.result);
+    photoMeta(r.result).ts=new Date().toISOString(); // 撮影日時を記録
     pinLog(p,'shoot',slotLabel(sl));
     afterPlanChange('枠に写真を登録しました');
   };
@@ -5073,7 +5138,6 @@ function editBlockReason(){
   const d=dwg(), v=viewingVerObj();
   if(!d) return '図面が選択されていません。左上の図面リストから開くか、「＋ 新規」で取り込んでください。';
   if(state.viewLock) return '閲覧ロック中です。編集するには右上のロックを解除してください。';
-  if(state.role!=='field') return `現在の役割（作図担当）ではペン・図形・ピンを追加できません。現場役割に切り替えてください。`;
   if(!state.online && !d.cached) return 'オフラインのため、この図面は端末に保存されていません。ペン・図形・ピンを追加できません。';
   if(v.status==='superseded') return '旧版のためペン・図形・ピンを追加できません。最新版をご覧ください。';
   return null;
@@ -5296,36 +5360,47 @@ function renderPinLog(){
 let pinSlotTarget=null; // ピンシートの「この枠を撮影」で開いたファイル選択の対象枠
 function renderPhotoGrid(){
   const p=curPinObj();if(!p)return;
+  const groups=pinGroups(p);
   const slots=planArr(state.selectedId,p.id);
   const extra=unplannedPhotos(state.selectedId,p);
   const done=slots.filter(s=>s.src).length+extra.length;
   const total=slots.length+extra.length;
   $('#photoCount').textContent = total ? `${done}/${total}` : '0';
   const g=$('#photoGrid');
-  if(!total){g.innerHTML='<div class="photo-empty">写真がありません。「写真を追加」で現場写真を撮影・選択してください。</div>';return;}
+  const ANNO='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>';
+  const RM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+  const CAM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+  // 区分ごとに写真を振り分け（未撮影枠・区分未設定は「未分類」へ）
+  const bucket={}; groups.forEach(gp=>bucket[gp.id]=[]); const uncat=[]; const emptySlots=[];
+  slots.forEach(sl=>{ if(sl.src){ const gid=photoGid(p,sl.src); (gid&&bucket[gid]?bucket[gid]:uncat).push({src:sl.src,name:sl.name}); } else { emptySlots.push(sl); } });
+  extra.forEach(src=>{ const gid=photoGid(p,src); (gid&&bucket[gid]?bucket[gid]:uncat).push({src,name:''}); });
+  const gOptions=(cur)=>groups.map(gp=>`<option value="${gp.id}" ${gp.id===cur?'selected':''}>${escHtml(gp.name)}</option>`).join('')+`<option value="" ${!cur?'selected':''}>未分類</option>`;
+  const cell=(o)=>{ const src=o.src, i=p.photos.indexOf(src);
+    return `<div class="photo-item"><div class="photo-cell"><img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" data-i="${i}">`
+      +`<select class="photo-gsel" data-src="${escAttr(src)}">${gOptions(photoGid(p,src))}</select>`
+      +`${o.name?`<span class="photo-slot-tag">${escHtml(o.name)}</span>`:''}`
+      +`<button class="photo-anno ${hasPhotoInk(src)?'has':''}" data-anno="${escAttr(src)}" title="写真に書き込み">${ANNO}</button>`
+      +`<button class="rm" data-rm="${i}">${RM}</button></div><span class="photo-date">${photoTimeLabel(src)||'\u2014'}</span></div>`;
+  };
+  const emptyCell=(sl)=>{ const stLabel=STATUS_LABELS[sl.meta.status];
+    return `<div class="photo-item"><div class="photo-cell empty" data-pinshoot="${sl.id}"><div class="photo-cell-ph">${CAM}<span>未撮影</span>${stLabel?`<span class="photo-cell-status">${stLabel}</span>`:''}</div><span class="photo-slot-tag">${escHtml(sl.name||'写真')}</span></div></div>`;
+  };
   let html='';
-  slots.forEach(sl=>{
-    if(sl.src){
-      const i=p.photos.indexOf(sl.src);
-      html+=`<div class="photo-cell"><img class="lphoto-img" src="${sl.src}" data-src="${escAttr(sl.src)}" data-i="${i}">
-        ${sl.name?`<span class="photo-slot-tag">${escHtml(sl.name)}</span>`:''}
-        <button class="photo-anno ${hasPhotoInk(sl.src)?'has':''}" data-anno="${escAttr(sl.src)}" title="写真に書き込み"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
-        <button class="rm" data-rm="${i}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>`;
-    }else{
-      const stLabel=STATUS_LABELS[sl.meta.status];
-      html+=`<div class="photo-cell empty" data-pinshoot="${sl.id}">
-        <div class="photo-cell-ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg><span>未撮影</span>${stLabel?`<span class="photo-cell-status">${stLabel}</span>`:''}</div>
-        <span class="photo-slot-tag">${escHtml(sl.name||'写真')}</span></div>`;
-    }
-  });
-  extra.forEach(src=>{
-    const i=p.photos.indexOf(src);
-    html+=`<div class="photo-cell"><img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" data-i="${i}"><button class="photo-anno ${hasPhotoInk(src)?'has':''}" data-anno="${escAttr(src)}" title="写真に書き込み"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button><button class="rm" data-rm="${i}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>`;
-  });
+  const section=(title,gid,cells)=>{
+    html+=`<div class="pg-section"><div class="pg-head"><span class="pg-name">${escHtml(title)}</span><span class="pg-tools">`;
+    if(gid){ html+=`<button class="pg-mini" data-gren="${gid}">改名</button><button class="pg-mini" data-gdel="${gid}">削除</button>`; }
+    html+=`<button class="pg-add" data-gadd="${gid||''}">＋写真</button></span></div><div class="photo-grid">${cells||'<div class="pg-empty">写真なし</div>'}</div></div>`;
+  };
+  groups.forEach(gp=>section(gp.name,gp.id,bucket[gp.id].map(cell).join('')));
+  if(uncat.length||emptySlots.length) section('未分類',null,uncat.map(cell).join('')+emptySlots.map(emptyCell).join(''));
   g.innerHTML=html;
   applyComposited(g); // 注釈があれば合成画像をサムネイルに反映
-  g.querySelectorAll('img').forEach(im=>im.addEventListener('click',()=>openLightbox(compositeCache[im.dataset.src]||im.dataset.src)));
+  g.querySelectorAll('img.lphoto-img').forEach(im=>im.addEventListener('click',()=>openLightbox(compositeCache[im.dataset.src]||im.dataset.src)));
   g.querySelectorAll('.photo-anno').forEach(btn=>btn.addEventListener('click',e=>{ e.stopPropagation(); openPanno(btn.dataset.anno); }));
+  g.querySelectorAll('.photo-gsel').forEach(sel=>{ sel.addEventListener('click',e=>e.stopPropagation()); sel.addEventListener('change',e=>{ e.stopPropagation(); setPhotoGid(p,sel.dataset.src,sel.value||null); renderPhotoGrid(); }); });
+  g.querySelectorAll('[data-gadd]').forEach(b=>b.addEventListener('click',()=>{ pinPhotoTargetGid=b.dataset.gadd||null; $('#photoInput').click(); }));
+  g.querySelectorAll('[data-gren]').forEach(b=>b.addEventListener('click',()=>{ const gp=groups.find(x=>x.id===b.dataset.gren); if(!gp)return; const n=prompt('区分の名前',gp.name); if(n&&n.trim()){ gp.name=n.trim(); renderPhotoGrid(); } }));
+  g.querySelectorAll('[data-gdel]').forEach(b=>b.addEventListener('click',async()=>{ const gp=groups.find(x=>x.id===b.dataset.gdel); if(!gp)return; const ok=await gConfirm({title:`区分「${gp.name}」を削除しますか？`,desc:'この区分の写真は「未分類」に移動します（写真自体は消えません）。',ok:'削除',danger:true}); if(!ok)return; (p.photos||[]).forEach(src=>{ if(photoGid(p,src)===gp.id) setPhotoGid(p,src,null); }); p.groups=groups.filter(x=>x.id!==gp.id); renderPhotoGrid(); }));
   g.querySelectorAll('.rm').forEach(b=>b.addEventListener('click',async e=>{
     e.stopPropagation();
     const ok=await gConfirm({title:'写真を削除しますか？',desc:'この写真を台帳から削除します。<br>撮影枠は残り「未撮影」に戻ります。',ok:'削除',danger:true});
@@ -5333,6 +5408,7 @@ function renderPhotoGrid(){
     const sl=slotForSrc(state.selectedId,p.id,p.photos[+b.dataset.rm]);
     const label=slotLabel(sl);
     const [gone]=p.photos.splice(+b.dataset.rm,1);
+    setPhotoGid(p,gone,null);
     detachSrcFromPlan(state.selectedId,gone); // 枠は残したまま「未撮影」へ戻す
     pinLog(p,'delete',label);
     renderPhotoGrid();renderPins();renderContext();renderList();renderPinLog();
@@ -5342,11 +5418,12 @@ function renderPhotoGrid(){
     $('#pinSlotPhotoInput').click();
   }));
 }
-$('#btnAddPhoto').addEventListener('click',()=>$('#photoInput').click());
+$('#btnAddPhoto').addEventListener('click',()=>{ const p=curPinObj(); if(!p)return; const n=prompt('新しい区分の名前（例：調査／工事前／工事後）','区分'); if(n&&n.trim()){ pinGroups(p).push({id:newGid(),name:n.trim()}); renderPhotoGrid(); } });
 $('#photoInput').addEventListener('change',e=>{
   const p=curPinObj();if(!p)return;
+  const gid=pinPhotoTargetGid;
   const files=[...e.target.files];let left=files.length;
-  files.forEach(f=>{const r=new FileReader();r.onload=()=>{p.photos.push(r.result);pinLog(p,'shoot','写真');if(--left===0){renderPhotoGrid();renderPins();renderContext();renderList();}};r.readAsDataURL(f);});
+  files.forEach(f=>{const r=new FileReader();r.onload=()=>{p.photos.push(r.result);photoMeta(r.result).ts=new Date().toISOString();setPhotoGid(p,r.result,gid);pinLog(p,'shoot','写真');if(--left===0){renderPhotoGrid();renderPins();renderContext();renderList();}};r.readAsDataURL(f);});
   e.target.value='';
 });
 // ピンシートから未撮影の枠を直接撮影（台帳へ切り替えずに完結させる）
@@ -5650,7 +5727,7 @@ function renderList(){
     html+=`<div class="group-label">${g}</div>`;
     groups[g].forEach(d=>{
       const pub=publishedVer(d);const locked=(!state.online&&!d.cached);
-      const showNew=state.role==='field'&&d.seenNew&&!locked;
+      const showNew=d.seenNew&&!locked;
       const pr=ledgerProgress(d.id);
       const badgeTxt=pr.total?`${pr.done}/${pr.total}`:'0';
       const badgeCls=pr.total?(pr.short?'short':'has'):'';
@@ -5808,16 +5885,15 @@ function renderContext(){
     });
     // 管理役割を廃止（v7.8）。仮登録・公開はどちらも作図役割から行う。
     const draft=d.versions.find(v=>v.status==='draft');
-    if(state.role==='drafter'){
-      vh=`<div class="approve-box neutral"><h4>作図担当の操作</h4>
+    // 版管理（投入→仮登録→公開）は役割統合により常時利用可能（v7.64）
+    vh=`<div class="approve-box neutral"><h4>図面の投入・版管理</h4>
         <p>変換元（Visio / CAD / Excel）を投入すると、クラウドで自動的にベクターPDFへ変換し「仮登録（ドラフト）」します。</p>
         <button class="btn-outline" id="btnUpload">＋ 図面を投入して仮登録</button></div>`+vh;
-      if(draft){
-        vh=`<div class="approve-box"><h4>⚑ 公開待ち</h4>
-          <p><b>v${draft.v}</b> を仮登録中です。内容を確認し、問題なければ公開してください。公開すると全現場端末へ一斉同期・プッシュ通知されます。</p>
-          <button class="btn-primary" id="btnPublish"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>最新版として公開</button>
-          </div>`+vh;
-      }
+    if(draft){
+      vh=`<div class="approve-box"><h4>⚑ 公開待ち</h4>
+        <p><b>v${draft.v}</b> を仮登録中です。内容を確認し、問題なければ公開してください。公開すると全現場端末へ一斉同期・プッシュ通知されます。</p>
+        <button class="btn-primary" id="btnPublish"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>最新版として公開</button>
+        </div>`+vh;
     }
     $('#paneVer').innerHTML=vh;
   }else{
@@ -5912,20 +5988,10 @@ function pushNotify(d,v){
 function dismiss(el){el.classList.remove('show');setTimeout(()=>el.remove(),400);}
 
 /* ===== role / net ===== */
-function setRole(r){
-  state.role=r;
-  document.querySelectorAll('#roleSeg button').forEach(b=>b.classList.toggle('active',b.dataset.role===r));
+function setRole(r){ // 役割は統合済み。互換のため関数は残すが field 固定
+  state.role='field';
   setTool('nav');renderAll();
 }
-document.querySelectorAll('#roleSeg button').forEach(b=>b.addEventListener('click',()=>setRole(b.dataset.role)));
-$('#netBtn').addEventListener('click',()=>{
-  state.online=!state.online;
-  const b=$('#netBtn');b.classList.toggle('online',state.online);b.classList.toggle('offline',!state.online);
-  $('#netStatus').textContent=state.online?'接続':'切断';
-  toast(state.online?'通信を回復しました':'オフライン：保存済の図面のみ閲覧できます',state.online?'ok':'warn');
-  renderAll();
-});
-
 /* ===== drawers ===== */
 function openDrawer(id){$('#scrim').classList.add('show');$('#'+id).classList.add('open');}
 function closeDrawers(){$('#scrim').classList.remove('show');document.querySelectorAll('.drawer').forEach(d=>d.classList.remove('open'));}
@@ -6248,7 +6314,7 @@ async function restoreFromAutosave(){
   SAVE_SEQS.forEach(st=>{ if(s[st.k]!==undefined) st.set(s[st.k]); });
   if(s.ui){
     if(s.ui.selectedId && drawings.some(d=>d.id===s.ui.selectedId)) state.selectedId=s.ui.selectedId;
-    if(s.ui.role) state.role=s.ui.role;
+    state.role='field'; // 役割は統合済み（保存値は無視）
     state.viewingVer=s.ui.viewingVer||null;
   }
   return true;

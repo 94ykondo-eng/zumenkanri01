@@ -751,6 +751,23 @@
        線分近傍、rect/ellipse=pointInShapeBody(輪郭/塗り)、text=bbox内。ボタン名も「消しゴム（なぞって消す）」に。
        ズーム中も pannoToCanvas は getBoundingClientRect 基準のため当たり判定は正しい。選択→消しゴム(まとめて削除)は従来どおり。
 -->
+
+<!--
+  build v7.62 (電気図面シンボルツール フェーズ1)  — ドックに「シンボル」ツール＋記号パレットを追加。JIS配線用図記号
+       ベースの簡略記号を SYMBOLS レジストリで定義（コンセント/スイッチ/照明/盤・機器/弱電・通信/防災の6カテゴリ・計26種）。
+       アイテム型 {type:'symbol', kind, x, y, size, rot, color}。drawInkItem に symbol 分岐（drawSymbol：translate→rotate→
+       各記号のdraw(c,s)）。パレットで記号選択＋大きさ(小30/中44/大66)＋回転(±45°)、図面タップで配置。既存記号はタップで
+       選択して回転・サイズ編集。SEL_TYPESに'symbol'を追加し itemBBox/itemVerts/moveItemBy/snapItem/hitSelItem を対応
+       ＝「選択」ツールで移動・削除・グループ・コピペ可。色は現在のインク色。パレットはパン除外＋編集ブロック時ロック。
+       配置・編集はアンドゥ対応。※写真編集側は未対応（図面ビューのみ）。記号の字形は簡略表現のため実機で要確認。
+-->
+
+<!--
+  build v7.63 (文字の縦書き/横書き対応)  — 文字ダイアログに「横書き/縦書き」トグルを追加。text アイテムに vertical フラグ。
+       drawInkItem の text 分岐で分岐描画：縦書きは右の列から、文字を上→下に1文字ずつ（textAlign/baseline=center/middle、
+       列幅=size*1.4、字送り=size*1.05）。横書きは従来どおり左揃え・上ベースライン。textBBox も縦書き対応（列数×列幅、
+       最大文字数×字送り）＝当たり判定・選択・移動も正しく追従。図面・写真編集の両方で有効。新規/編集の commitText で保存。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1310,6 +1327,22 @@
   .sel-act[disabled]{opacity:.38;pointer-events:none}
   .select-bar .mb-hint{min-width:0;overflow:hidden;text-overflow:ellipsis;flex-shrink:1}
   .select-bar{max-width:calc(100vw - 24px)}
+  .symbol-panel{position:absolute;bottom:112px;left:50%;transform:translateX(-50%);z-index:40;
+    display:none;flex-direction:column;gap:8px;width:min(94vw,760px);max-height:46vh;
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;box-shadow:0 16px 48px rgba(0,0,0,.5)}
+  .symbol-panel.show{display:flex}
+  .sym-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;overflow-y:auto;padding-right:4px}
+  .sym-cat{grid-column:1/-1;font-size:12px;font-weight:700;color:var(--muted);padding:6px 2px 2px}
+  .sym-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 4px;border-radius:10px;background:var(--panel2);border:1px solid var(--line2)}
+  .sym-item.on{border-color:var(--signal);background:var(--panel3)}
+  .sym-item canvas{width:44px;height:44px;pointer-events:none}
+  .sym-item span{font-size:10.5px;color:var(--text);text-align:center;line-height:1.2;pointer-events:none}
+  .sym-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;border-top:1px solid var(--line2);padding-top:8px}
+  .sym-lbl{font-size:12px;color:var(--muted);font-weight:600}
+  .sym-sz,.sym-rot{height:34px;min-width:42px;padding:0 12px;border-radius:9px;background:var(--panel2);border:1px solid var(--line2);color:var(--text);font-size:14px;font-weight:600}
+  .sym-sz.on{background:var(--panel3);border-color:var(--signal);color:#fff}
+  .sym-sz:active,.sym-rot:active{transform:scale(.95)}
+  .sym-sep{width:1px;height:22px;background:var(--line2)}
   .mb-scale{display:flex;align-items:center;gap:6px;cursor:pointer;
     background:var(--panel3);border:1px solid var(--line2);border-radius:8px;
     padding:5px 10px;color:var(--ink);font-size:12px}
@@ -1647,7 +1680,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.61 · 写真編集の消しゴムを全注釈対応に</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.63 · 文字の縦書き/横書き対応</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -1751,6 +1784,18 @@
     <p>通信の無い環境では、事前に端末へ保存した図面だけを閲覧できます。右上の情報パネルからオフライン保存をオンにするか、通信を回復してください。</p>
   </div>
 
+  <!-- 電気シンボル パレット -->
+  <div class="symbol-panel" id="symbolPanel">
+    <div class="sym-grid" id="symGrid"></div>
+    <div class="sym-ctrl">
+      <span class="sym-lbl">大きさ</span>
+      <button class="sym-sz" data-sz="30">小</button><button class="sym-sz on" data-sz="44">中</button><button class="sym-sz" data-sz="66">大</button>
+      <span class="sym-sep"></span>
+      <span class="sym-lbl">回転</span>
+      <button class="sym-rot" id="symRotL" title="左に45°">⟲</button><b id="symRotVal">0°</b><button class="sym-rot" id="symRotR" title="右に45°">⟳</button>
+    </div>
+  </div>
+
   <!-- markup dock (field only) -->
   <div class="dock" id="dock">
     <button class="dock-btn nav on" id="btnNav">
@@ -1771,6 +1816,10 @@
     <button class="dock-btn" id="btnShape">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="10" height="10" rx="1.5"/><circle cx="17.5" cy="17.5" r="5"/></svg>
       図形
+    </button>
+    <button class="dock-btn" id="btnSymbol">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="6"/><path d="M10 8.5v3M14 8.5v3M12 16v4M9 22h6"/></svg>
+      シンボル
     </button>
     <button class="dock-btn" id="btnPin">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s7-6.3 7-11a7 7 0 10-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
@@ -2158,6 +2207,10 @@
       <button class="text-size-btn" data-size="36">中</button>
       <button class="text-size-btn" data-size="54">大</button>
       <button class="text-size-btn" data-size="78">特大</button>
+    </div>
+    <div class="text-sizes" id="textOrient">
+      <button class="text-size-btn" data-vert="0">横書き</button>
+      <button class="text-size-btn" data-vert="1">縦書き</button>
     </div>
     <div class="confirm-actions">
       <button class="btn-cancel" id="textCancel">キャンセル</button>
@@ -2570,6 +2623,7 @@ const bgCanvas=document.createElement('canvas'), bgCtx=bgCanvas.getContext('2d')
 const pointers=new Map();
 let curItem=null, gesture=null;
 let selectedItem=null, dragMode=null; // selection + move/resize of an already-placed shape
+let symbolKind='outlet', symbolSize=44, symbolRot=0, symSelected=null; // 電気シンボルツール
 // ペンモード時の「なぞり消しゴム」（free線のみ対象・図形は対象外）
 let penEraseMode=false;   // 消去モードのオン/オフ
 let penErasing=false;     // なぞり消去ドラッグ中
@@ -2654,15 +2708,21 @@ function shapeBounds(item){
   return {x0:Math.min(item.x1,item.x2),x1:Math.max(item.x1,item.x2),y0:Math.min(item.y1,item.y2),y1:Math.max(item.y1,item.y2)};
 }
 /* ===== 範囲/自由選択（選択ツール）：図形＋ペン線を複数選択 ===== */
-const SEL_TYPES=['free','rect','ellipse','line','arrow','poly','text']; // 対象＝図形＋ペン＋文字（計測・ピンは対象外）
+const SEL_TYPES=['free','rect','ellipse','line','arrow','poly','text','symbol']; // 図形＋ペン＋文字＋電気シンボル
 const CANVAS_FONT='"IBM Plex Sans JP","IBM Plex Sans",system-ui,sans-serif';
 function textLines(item){ return String(item.text||'').split('\n'); }
-function textBBox(item){ // 文字の外接矩形（measureTextで実測）
+function textBBox(item){ // 文字の外接矩形（縦書き対応）
   const size=item.size||36;
+  const lines=textLines(item);
+  if(item.vertical){
+    const colW=size*1.4, charH=size*1.05;
+    const maxLen=Math.max(1,...lines.map(l=>[...l].length||1));
+    return {x0:item.x, x1:item.x+lines.length*colW, y0:item.y, y1:item.y+maxLen*charH};
+  }
   ctx.save(); ctx.font=`600 ${size}px ${CANVAS_FONT}`;
-  let w=0; textLines(item).forEach(ln=>{ w=Math.max(w, ctx.measureText(ln||' ').width); });
+  let w=0; lines.forEach(ln=>{ w=Math.max(w, ctx.measureText(ln||' ').width); });
   ctx.restore();
-  const h=textLines(item).length*size*1.28;
+  const h=lines.length*size*1.28;
   return {x0:item.x, x1:item.x+Math.max(w,size*0.6), y0:item.y, y1:item.y+h};
 }
 let selMulti=[];   // 複数選択中のアイテム参照
@@ -2670,6 +2730,7 @@ let selDraft=null; // 選択中のドラッグ（矩形/なげなわ）: {mode:'
 let selMoveOrig=null; // 移動中の元座標スナップショット
 function itemBBox(item){ // free も含めた外接矩形
   if(item.type==='text') return textBBox(item);
+  if(item.type==='symbol'){ const h=(item.size||44)*0.7; return {x0:item.x-h,x1:item.x+h,y0:item.y-h,y1:item.y+h}; }
   if(item.type==='free'||item.type==='poly'){
     const xs=item.pts.map(p=>p.x), ys=item.pts.map(p=>p.y);
     return {x0:Math.min(...xs),x1:Math.max(...xs),y0:Math.min(...ys),y1:Math.max(...ys)};
@@ -2679,7 +2740,7 @@ function itemBBox(item){ // free も含めた外接矩形
 function itemVerts(item){ // 「完全内包」判定に使う代表点
   if(item.type==='free'||item.type==='poly') return item.pts.map(p=>({x:p.x,y:p.y}));
   const b=itemBBox(item);
-  if(item.type==='rect'||item.type==='ellipse'||item.type==='text') return [{x:b.x0,y:b.y0},{x:b.x1,y:b.y0},{x:b.x1,y:b.y1},{x:b.x0,y:b.y1}];
+  if(item.type==='rect'||item.type==='ellipse'||item.type==='text'||item.type==='symbol') return [{x:b.x0,y:b.y0},{x:b.x1,y:b.y0},{x:b.x1,y:b.y1},{x:b.x0,y:b.y1}];
   return [{x:item.x1,y:item.y1},{x:item.x2,y:item.y2}]; // line / arrow
 }
 function pointInPoly(pt, poly){ // ray casting
@@ -2726,6 +2787,7 @@ function hitSelItem(pt){
       if(it.pts.length===1){ if(Math.hypot(pt.x-it.pts[0].x,pt.y-it.pts[0].y)<14) return it; }
       for(let j=0;j<it.pts.length-1;j++){ if(distToSegment(pt,it.pts[j].x,it.pts[j].y,it.pts[j+1].x,it.pts[j+1].y)<14) return it; }
     } else if(it.type==='text'){ const b=textBBox(it); if(pt.x>=b.x0-6&&pt.x<=b.x1+6&&pt.y>=b.y0-6&&pt.y<=b.y1+6) return it; }
+    else if(it.type==='symbol'){ const h=(it.size||44)*0.7; if(pt.x>=it.x-h&&pt.x<=it.x+h&&pt.y>=it.y-h&&pt.y<=it.y+h) return it; }
     else if(pointInShapeBody(it,pt)) return it;
   }
   return null;
@@ -2786,10 +2848,10 @@ function pointInSelGroup(pt){
 function clearMultiSel(){ selMulti=[]; selDraft=null; selMoveOrig=null; }
 function moveItemBy(item, dx, dy, orig){
   if(item.type==='free'||item.type==='poly'){ item.pts.forEach((q,i)=>{ q.x=orig.pts[i].x+dx; q.y=orig.pts[i].y+dy; }); }
-  else if(item.type==='text'){ item.x=orig.x+dx; item.y=orig.y+dy; }
+  else if(item.type==='text'||item.type==='symbol'){ item.x=orig.x+dx; item.y=orig.y+dy; }
   else { item.x1=orig.x1+dx; item.y1=orig.y1+dy; item.x2=orig.x2+dx; item.y2=orig.y2+dy; }
 }
-function snapItem(item){ return (item.type==='free'||item.type==='poly') ? {pts:item.pts.map(q=>({x:q.x,y:q.y}))} : item.type==='text' ? {x:item.x,y:item.y} : {x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2}; }
+function snapItem(item){ return (item.type==='free'||item.type==='poly') ? {pts:item.pts.map(q=>({x:q.x,y:q.y}))} : (item.type==='text'||item.type==='symbol') ? {x:item.x,y:item.y} : {x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2}; }
 function hitTestShape(pt){
   const arr=strokes[inkKey()]||[];
   for(let i=arr.length-1;i>=0;i--){
@@ -2858,7 +2920,7 @@ let panLock=false; // 作図ツール中は1本指で画面を動かさない（
 let lastPenTs=0; const PEN_GRACE=450; // 直近にペンシルを使った時刻。ペン中＋直後の一瞬だけ指を無視し、以降は指で描ける
 function penDown(){ for(const p of pointers.values()) if(p.type==='pen') return true; return false; }
 vp.addEventListener('pointerdown',e=>{
-  if(e.target.closest('.dock,.hint-chip,.tool-panel,.pin,.measure-bar'))return;
+  if(e.target.closest('.dock,.hint-chip,.tool-panel,.pin,.measure-bar,.symbol-panel'))return;
   // ① パームリジェクション：Apple Pencil が触れている間は指タッチを一切拾わない（手のひら・指の誤描画/誤移動を防止）
   if(e.pointerType==='touch' && penDown()) return;
   if(e.pointerType==='pen'){
@@ -2881,7 +2943,7 @@ vp.addEventListener('pointerdown',e=>{
   const drawTool = state.tool==='pen'||state.tool==='shape'||state.tool==='measure'||state.tool==='select';
   const drawable = drawTool && canPinEdit() && inputCanDraw;
   const pinPlacing = state.tool==='pin' && canPinEdit() && inputCanDraw; // ④ ピン設置中も1本指移動を無効化
-  if(pointers.size===1) panLock = (drawTool || state.tool==='pin' || state.tool==='text') && canPinEdit(); // 作図/選択/ピン/文字中は1本指（手のひら含む）で画面を動かさない
+  if(pointers.size===1) panLock = (drawTool || state.tool==='pin' || state.tool==='text' || state.tool==='symbol') && canPinEdit(); // 作図/選択/ピン/文字/シンボル中は1本指で画面を動かさない
   const isPoly=state.tool==='shape' && state.shapeType==='poly';
   if(pointers.size===1 && polyDraft && !overSheet(e.clientX,e.clientY)){
     finishPoly(); polyPending=false; downInfo=null; return; // touching outside the drawing ends the line
@@ -3075,6 +3137,20 @@ function endPointer(e){
     const hit=hitTextItem(pt);
     openTextEditor(hit?null:pt, hit||null);
   }
+  // シンボルツール：タップで配置／既存シンボルはタップで選択（回転・サイズ編集用）
+  if(wasLast && downInfo && !downInfo.moved && state.tool==='symbol' && canPinEdit() && overSheet(downInfo.x,downInfo.y)){
+    const pt=toCanvas(downInfo.x,downInfo.y);
+    const hit=hitSymbol(pt);
+    if(hit){ symSelected=hit; symbolSize=hit.size; symbolRot=hit.rot||0; }
+    else {
+      beginInkTxn();
+      const item={type:'symbol', kind:symbolKind, x:pt.x, y:pt.y, size:symbolSize, rot:symbolRot, color:state.inkColor};
+      (strokes[inkKey()]=strokes[inkKey()]||[]).push(item);
+      commitInkTxn();
+      symSelected=item;
+    }
+    updateSymbolPanel(); redrawInk();
+  }
   // continuous line: commits a point at wherever the pointer is released — a plain tap
   // places it there directly; a press-drag-release lets the line "follow" first, then locks in
   if(wasLast && polyPending && state.tool==='shape' && state.shapeType==='poly'
@@ -3176,13 +3252,64 @@ function drawFreeStroke(c, item){
   const n=p.length, mn={x:(p[n-2].x+p[n-1].x)/2,y:(p[n-2].y+p[n-1].y)/2};
   c.lineWidth=freeW(base,p[n-1].p); c.beginPath(); c.moveTo(mn.x,mn.y); c.lineTo(p[n-1].x,p[n-1].y); c.stroke();
 }
+// ===== 電気図面シンボル（JIS配線用図記号ベースの簡略表現）=====
+// 各 draw(c,s) は原点中心・一辺sの箱に描く。stroke/fill色・線幅は呼び出し側で設定済み。
+function symText(c,t,s,size){ c.save(); c.font=`600 ${size||s*0.3}px ${CANVAS_FONT}`; c.textAlign='center'; c.textBaseline='middle'; c.fillText(t,0,0); c.restore(); }
+const SYMBOLS={
+  outlet:{cat:'コンセント',label:'一般',draw(c,s){const r=s*0.34;c.beginPath();c.arc(0,0,r,0,7);c.stroke();c.beginPath();c.moveTo(-r*0.45,r*0.1);c.lineTo(-r*0.45,r*0.72);c.moveTo(r*0.45,r*0.1);c.lineTo(r*0.45,r*0.72);c.stroke();}},
+  outletE:{cat:'コンセント',label:'アース付',draw(c,s){SYMBOLS.outlet.draw(c,s);c.save();c.translate(s*0.36,-s*0.34);symText(c,'E',s,s*0.24);c.restore();}},
+  outletWP:{cat:'コンセント',label:'防水',draw(c,s){SYMBOLS.outlet.draw(c,s);c.save();c.translate(s*0.42,-s*0.34);symText(c,'WP',s,s*0.2);c.restore();}},
+  outletLK:{cat:'コンセント',label:'抜け止め',draw(c,s){SYMBOLS.outlet.draw(c,s);c.save();c.translate(s*0.42,-s*0.34);symText(c,'LK',s,s*0.2);c.restore();}},
+  outlet200:{cat:'コンセント',label:'200V',draw(c,s){SYMBOLS.outlet.draw(c,s);c.save();c.translate(0,s*0.58);symText(c,'200V',s,s*0.2);c.restore();}},
+  sw:{cat:'スイッチ',label:'片切',draw(c,s){const r=s*0.16;c.beginPath();c.arc(0,0,r,0,7);c.fill();c.beginPath();c.moveTo(r*0.7,-r*0.7);c.lineTo(s*0.5,-s*0.5);c.stroke();}},
+  sw3:{cat:'スイッチ',label:'3路',draw(c,s){SYMBOLS.sw.draw(c,s);c.save();c.translate(s*0.32,s*0.02);symText(c,'3',s,s*0.28);c.restore();}},
+  sw4:{cat:'スイッチ',label:'4路',draw(c,s){SYMBOLS.sw.draw(c,s);c.save();c.translate(s*0.32,s*0.02);symText(c,'4',s,s*0.28);c.restore();}},
+  swD:{cat:'スイッチ',label:'調光',draw(c,s){SYMBOLS.sw.draw(c,s);c.save();c.translate(s*0.32,s*0.02);symText(c,'D',s,s*0.28);c.restore();}},
+  swRAS:{cat:'スイッチ',label:'人感',draw(c,s){SYMBOLS.sw.draw(c,s);c.save();c.translate(s*0.4,s*0.02);symText(c,'RAS',s,s*0.17);c.restore();}},
+  ceiling:{cat:'照明',label:'引掛シーリング',draw(c,s){const r=s*0.32;c.beginPath();c.arc(0,0,r,0,7);c.stroke();c.beginPath();c.moveTo(-r*0.62,0);c.lineTo(r*0.62,0);c.moveTo(0,-r*0.62);c.lineTo(0,r*0.62);c.stroke();}},
+  downlight:{cat:'照明',label:'ダウンライト',draw(c,s){const r=s*0.32;c.beginPath();c.arc(0,0,r,0,7);c.stroke();symText(c,'DL',s,s*0.24);}},
+  fluor:{cat:'照明',label:'蛍光灯',draw(c,s){const w=s*0.88,h=s*0.3;c.strokeRect(-w/2,-h/2,w,h);c.beginPath();c.moveTo(-w/2,0);c.lineTo(w/2,0);c.stroke();}},
+  exitLight:{cat:'照明',label:'誘導灯',draw(c,s){const w=s*0.7,h=s*0.5;c.strokeRect(-w/2,-h/2,w,h);c.beginPath();c.moveTo(-w/2,-h/2);c.lineTo(w/2,h/2);c.moveTo(w/2,-h/2);c.lineTo(-w/2,h/2);c.stroke();}},
+  panel:{cat:'盤・機器',label:'分電盤',draw(c,s){const w=s*0.92,h=s*0.5;c.strokeRect(-w/2,-h/2,w,h);c.save();c.beginPath();c.rect(-w/2,-h/2,w,h);c.clip();for(let x=-w/2-h;x<w/2;x+=s*0.16){c.beginPath();c.moveTo(x,-h/2);c.lineTo(x+h,h/2);c.stroke();}c.restore();}},
+  fan:{cat:'盤・機器',label:'換気扇',draw(c,s){const r=s*0.34;c.beginPath();c.arc(0,0,r,0,7);c.stroke();for(let k=0;k<4;k++){c.save();c.rotate(k*Math.PI/2);c.beginPath();c.moveTo(0,0);c.quadraticCurveTo(r*0.7,r*0.25,r*0.9,0);c.stroke();c.restore();}}},
+  ac:{cat:'盤・機器',label:'エアコン',draw(c,s){const w=s*0.9,h=s*0.44;c.strokeRect(-w/2,-h/2,w,h);symText(c,'RC',s,s*0.24);}},
+  tv:{cat:'弱電・通信',label:'TV端子',draw(c,s){const r=s*0.33;c.beginPath();c.arc(0,0,r,0,7);c.stroke();symText(c,'TV',s,s*0.22);}},
+  lan:{cat:'弱電・通信',label:'LAN端子',draw(c,s){const a=s*0.34;c.beginPath();c.moveTo(0,-a);c.lineTo(a,a*0.8);c.lineTo(-a,a*0.8);c.closePath();c.stroke();c.save();c.translate(0,a*0.28);symText(c,'LAN',s,s*0.16);c.restore();}},
+  tel:{cat:'弱電・通信',label:'電話',draw(c,s){const r=s*0.33;c.beginPath();c.arc(0,0,r,0,7);c.stroke();symText(c,'T',s,s*0.28);}},
+  intercom:{cat:'弱電・通信',label:'インターホン',draw(c,s){const r=s*0.33;c.beginPath();c.arc(0,0,r,0,7);c.stroke();symText(c,'IP',s,s*0.22);}},
+  smoke:{cat:'防災',label:'煙感知器',draw(c,s){const r=s*0.33;c.beginPath();c.arc(0,0,r,0,7);c.stroke();symText(c,'S',s,s*0.3);}},
+  heat:{cat:'防災',label:'熱感知器',draw(c,s){const a=s*0.3;c.strokeRect(-a,-a,a*2,a*2);c.beginPath();c.moveTo(-a,-a);c.lineTo(a,a);c.stroke();}},
+  caller:{cat:'防災',label:'発信機',draw(c,s){const r=s*0.33;c.beginPath();c.arc(0,0,r,0,7);c.stroke();symText(c,'P',s,s*0.3);}},
+  indicator:{cat:'防災',label:'表示灯',draw(c,s){const r=s*0.33;c.beginPath();c.arc(0,0,r,0,7);c.stroke();c.beginPath();c.arc(0,0,r*0.42,0,7);c.fill();}},
+  bell:{cat:'防災',label:'ベル',draw(c,s){const r=s*0.36;c.beginPath();c.arc(0,0,r,Math.PI,0);c.closePath();c.stroke();c.beginPath();c.moveTo(0,0);c.lineTo(0,r*0.35);c.stroke();}},
+};
+const SYMBOL_ORDER=Object.keys(SYMBOLS);
+const SYMBOL_CATS=[...new Set(SYMBOL_ORDER.map(k=>SYMBOLS[k].cat))];
+function drawSymbol(c,item){
+  const s=item.size||44, col=item.color||'#111827';
+  c.save();
+  c.translate(item.x,item.y);
+  c.rotate((item.rot||0)*Math.PI/180);
+  c.strokeStyle=col; c.fillStyle=col; c.lineWidth=Math.max(1.2,s*0.055); c.lineJoin='round'; c.lineCap='round'; c.setLineDash([]);
+  (SYMBOLS[item.kind]||SYMBOLS.outlet).draw(c,s);
+  c.restore();
+}
 function drawInkItem(c, item, draftInfo){
+  if(item.type==='symbol'){ drawSymbol(c,item); return; }
   if(item.type==='text'){
     const size=item.size||36;
     c.fillStyle=item.color||'#E5372A';
     c.font=`600 ${size}px ${CANVAS_FONT}`;
-    c.textBaseline='top'; c.textAlign='left'; c.setLineDash([]);
-    textLines(item).forEach((ln,i)=>{ c.fillText(ln, item.x, item.y+i*size*1.28); });
+    c.setLineDash([]);
+    const lines=textLines(item);
+    if(item.vertical){ // 縦書き：右の列から、文字は上から下へ
+      const colW=size*1.4, charH=size*1.05, w=lines.length*colW;
+      c.textBaseline='middle'; c.textAlign='center';
+      lines.forEach((ln,li)=>{ const cx=item.x + w - (li+0.5)*colW; [...ln].forEach((ch,ci)=>{ c.fillText(ch, cx, item.y + ci*charH + charH/2); }); });
+    } else { // 横書き
+      c.textBaseline='top'; c.textAlign='left';
+      lines.forEach((ln,i)=>{ c.fillText(ln, item.x, item.y+i*size*1.28); });
+    }
     return;
   }
   c.strokeStyle=item.color||'#E5372A';
@@ -3235,6 +3362,7 @@ function redrawInk(){
   const list=strokes[inkKey()]||[];
   if(selectedItem && !list.includes(selectedItem)) deselectShape(); // e.g. removed by undo/clear
   if(selMulti.length) selMulti=selMulti.filter(it=>list.includes(it)); // 消えたものは選択から外す
+  if(symSelected && !list.includes(symSelected)) symSelected=null;
   const draftInfo={item:polyDraft, hoverPt:hoverPt};
   list.forEach(item=>drawInkItem(ctx,item,draftInfo));
   if(!curItem){ // 確定済みストロークだけをキャッシュ（ペン描画中の高速合成に使う。選択枠などは含めない）
@@ -3278,6 +3406,11 @@ function redrawInk(){
     }
     ctx.restore();
   }
+  if(symSelected && state.tool==='symbol'){ // 選択中シンボルのハイライト
+    const b=itemBBox(symSelected);
+    ctx.save(); ctx.strokeStyle='#3B82F6'; ctx.lineWidth=1.5; ctx.setLineDash([5,4]);
+    ctx.strokeRect(b.x0,b.y0,b.x1-b.x0,b.y1-b.y0); ctx.restore();
+  }
   if(!curItem && !selDraft && !dragMode) refreshInkBtns(); // 描画/移動中は毎フレームのDOM更新を省いてカクつきを防ぐ
 }
 // ペン描画の高速化：確定済みストロークを一度だけオフスクリーンへ描き、以降は「キャッシュ＋描いている線」だけ合成する。
@@ -3316,6 +3449,7 @@ function setTool(t){
   if(t!=='shape' && polyDraft) finishPoly();
   if(t!=='shape') deselectShape();
   if(t!=='select') clearMultiSel(); // 選択ツールを離れたら複数選択を解除
+  if(t!=='symbol') symSelected=null; // シンボルツールを離れたら選択解除
   if(t!=='pen'){ penEraseMode=false; penErasing=false; } // ペン以外に移ったら消去モード解除
   polyPending=false;
   state.tool=t;
@@ -3323,11 +3457,12 @@ function setTool(t){
   $('#btnPen').classList.toggle('on',t==='pen');
   $('#btnText').classList.toggle('on',t==='text');
   $('#btnShape').classList.toggle('on',t==='shape');
+  $('#btnSymbol').classList.toggle('on',t==='symbol');
   $('#btnPin').classList.toggle('on',t==='pin');
   $('#btnMeasure').classList.toggle('on',t==='measure');
   $('#btnSelect').classList.toggle('on',t==='select');
   vp.classList.toggle('placing',t==='pin'||t==='shape'||t==='measure');
-  layoutPanels(); updateCollapsedGlyphs(); updateMeasureBar(); updateSelectBar();
+  layoutPanels(); updateCollapsedGlyphs(); updateMeasureBar(); updateSelectBar(); updateSymbolPanel();
   refreshInkBtns(); redrawInk();
   if(t==='pen')toast('ペン：1本指で描画、2本指で移動・拡大（元データは非破壊）','ok');
   if(t==='shape')toast('図形：ドラッグで描画（既存に重ねて描けます）。移動・削除は「選択」ツールで。シフトで正方形・正円・45°に固定','ok');
@@ -3335,6 +3470,7 @@ function setTool(t){
   if(t==='measure')toast('計測：2点をドラッグで実寸を表示。シフトで水平・垂直・45°に固定','ok');
   if(t==='select')toast('選択：囲んで図形・ペンを複数選択。選択をドラッグで移動、消しゴムで削除','ok');
   if(t==='text')toast('文字：図面をタップしてキーボードで入力。既存の文字はタップで編集、移動・削除は「選択」ツールで','ok');
+  if(t==='symbol')toast('シンボル：下のパレットで記号を選び図面をタップして配置。大きさ・回転はパレットで。移動・削除は「選択」ツールで','ok');
 }
 $('#btnNav').addEventListener('click',()=>setTool('nav'));
 $('#btnPen').addEventListener('click',()=>{
@@ -3430,6 +3566,17 @@ $('#btnSelect').addEventListener('click',()=>{
 $('#btnText').addEventListener('click',()=>{
   const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('text');
 });
+$('#btnSymbol').addEventListener('click',()=>{
+  const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('symbol');
+});
+$('#symbolPanel').querySelectorAll('.sym-sz').forEach(b=>b.addEventListener('click',()=>{
+  const sz=+b.dataset.sz;
+  if(symSelected){ beginInkTxn(); symSelected.size=sz; symbolSize=sz; redrawInk(); commitInkTxn(); }
+  else symbolSize=sz;
+  $('#symbolPanel').querySelectorAll('.sym-sz').forEach(x=>x.classList.toggle('on',+x.dataset.sz===sz));
+}));
+$('#symRotL').addEventListener('click',()=>symRotate(-45));
+$('#symRotR').addEventListener('click',()=>symRotate(45));
 $('#textOk').addEventListener('click',commitText);
 $('#textCancel').addEventListener('click',closeTextEditor);
 $('#textScrim').addEventListener('click',e=>{ if(e.target.id==='textScrim') closeTextEditor(); });
@@ -4218,6 +4365,7 @@ function pannoHitSelItem(pt){
       if(it.pts.length===1){ if(Math.hypot(pt.x-it.pts[0].x,pt.y-it.pts[0].y)<tol) return it; }
       for(let j=0;j<it.pts.length-1;j++){ if(distToSegment(pt,it.pts[j].x,it.pts[j].y,it.pts[j+1].x,it.pts[j+1].y)<tol) return it; }
     } else if(it.type==='text'){ const b=textBBox(it); if(pt.x>=b.x0-6&&pt.x<=b.x1+6&&pt.y>=b.y0-6&&pt.y<=b.y1+6) return it; }
+    else if(it.type==='symbol'){ const h=(it.size||44)*0.7; if(pt.x>=it.x-h&&pt.x<=it.x+h&&pt.y>=it.y-h&&pt.y<=it.y+h) return it; }
     else if(pointInShapeBody(it,pt)) return it;
   }
   return null;
@@ -5643,6 +5791,7 @@ function renderViewer(){
   $('#btnMeasure').classList.toggle('locked',!canEdit);
   $('#btnSelect').classList.toggle('locked',!canEdit);
   $('#btnText').classList.toggle('locked',!canEdit);
+  $('#btnSymbol').classList.toggle('locked',!canEdit);
   if(!canEdit && state.tool!=='nav')setTool('nav');
   renderPins();
 }
@@ -5832,6 +5981,13 @@ let textPt=null;     // 新規配置位置（canvas座標）
 let textPannoMode=false; // 写真編集エディタからの起動か
 let textColor='#E5372A'; // 文字色
 let textSize=36;         // 文字サイズ（canvas単位）
+let textVertical=false;  // 縦書きフラグ
+function renderTextOrient(){
+  $('#textOrient').querySelectorAll('.text-size-btn').forEach(b=>{
+    b.classList.toggle('on', (b.dataset.vert==='1')===textVertical);
+    b.onclick=()=>{ textVertical=(b.dataset.vert==='1'); $('#textOrient').querySelectorAll('.text-size-btn').forEach(x=>x.classList.toggle('on',(x.dataset.vert==='1')===textVertical)); };
+  });
+}
 function renderTextColors(){
   $('#textColors').innerHTML=TEXT_COLORS.map(c=>`<button class="ps-color ${c===textColor?'on':''}" data-color="${c}" style="background:${c}"></button>`).join('');
   $('#textColors').querySelectorAll('.ps-color').forEach(b=>b.addEventListener('click',()=>{
@@ -5861,7 +6017,8 @@ function openTextEditor(pt, existing, pannoMode){
   const t=$('#textInput'); t.value = existing? existing.text : '';
   textColor = existing ? (existing.color||state.inkColor) : (textColor||state.inkColor);
   textSize = existing ? (existing.size||36) : (textSize||36);
-  renderTextColors(); renderTextSizes();
+  textVertical = existing ? !!existing.vertical : textVertical;
+  renderTextColors(); renderTextSizes(); renderTextOrient();
   $('#textScrim').classList.add('show');
   t.focus(); // タップ操作の中で同期的にフォーカス＝iOSでキーボードが出る
   try{ t.setSelectionRange(t.value.length,t.value.length); }catch(_){}
@@ -5871,28 +6028,67 @@ function commitText(){
   const val=$('#textInput').value.replace(/[ \t]+$/,'').replace(/\n+$/,'');
   if(textPannoMode){ // 写真編集：photoInk[pannoSrc] に対して確定（写真側のアンドゥ体系）
     if(textTarget){
-      if(val){ textTarget.text=val; textTarget.color=textColor; textTarget.size=textSize; }
+      if(val){ textTarget.text=val; textTarget.color=textColor; textTarget.size=textSize; textTarget.vertical=textVertical; }
       else { const arr=photoInk[pannoSrc]||[]; const i=arr.indexOf(textTarget); if(i>-1) arr.splice(i,1); }
       photoInkRedo[pannoSrc]=[];
     } else if(val && textPt){
-      photoInkArr(pannoSrc).push({type:'text', x:textPt.x, y:textPt.y, text:val, color:textColor, size:textSize});
+      photoInkArr(pannoSrc).push({type:'text', x:textPt.x, y:textPt.y, text:val, color:textColor, size:textSize, vertical:textVertical});
       photoInkRedo[pannoSrc]=[];
     }
     redrawPanno(); closeTextEditor(); return;
   }
   if(textTarget){
     beginInkTxn();
-    if(val){ textTarget.text=val; textTarget.color=textColor; textTarget.size=textSize; }
+    if(val){ textTarget.text=val; textTarget.color=textColor; textTarget.size=textSize; textTarget.vertical=textVertical; }
     else { const arr=strokes[inkKey()]||[]; const i=arr.indexOf(textTarget); if(i>-1) arr.splice(i,1); } // 空にしたら削除
     redrawInk(); commitInkTxn();
   } else if(val && textPt){
     beginInkTxn();
-    const item={type:'text', x:textPt.x, y:textPt.y, text:val, color:textColor, size:textSize};
+    const item={type:'text', x:textPt.x, y:textPt.y, text:val, color:textColor, size:textSize, vertical:textVertical};
     (strokes[inkKey()]=strokes[inkKey()]||[]).push(item);
     redrawInk(); commitInkTxn();
     toast('文字を配置しました。「選択」ツールで移動・削除できます','ok');
   }
   closeTextEditor();
+}
+/* ===== 電気シンボル ツール ===== */
+function renderSymbolGrid(){
+  const grid=$('#symGrid'); if(!grid) return;
+  let html='';
+  SYMBOL_CATS.forEach(cat=>{
+    html+=`<div class="sym-cat">${cat}</div>`;
+    SYMBOL_ORDER.filter(k=>SYMBOLS[k].cat===cat).forEach(k=>{
+      html+=`<button class="sym-item ${k===symbolKind?'on':''}" data-kind="${k}"><canvas width="88" height="88" data-sk="${k}"></canvas><span>${SYMBOLS[k].label}</span></button>`;
+    });
+  });
+  grid.innerHTML=html;
+  const col=getComputedStyle(document.body).getPropertyValue('--text').trim()||'#e6eaf0';
+  grid.querySelectorAll('canvas[data-sk]').forEach(cv=>{ const cx=cv.getContext('2d'); cx.clearRect(0,0,88,88); cx.save(); cx.translate(44,44); drawSymbol(cx,{type:'symbol',kind:cv.dataset.sk,x:0,y:0,size:52,rot:0,color:col}); cx.restore(); });
+  grid.querySelectorAll('.sym-item').forEach(b=>b.addEventListener('click',()=>{
+    symbolKind=b.dataset.kind; symSelected=null; redrawInk();
+    grid.querySelectorAll('.sym-item').forEach(x=>x.classList.toggle('on',x.dataset.kind===symbolKind));
+  }));
+}
+function updateSymbolPanel(){
+  const show=state.tool==='symbol';
+  const p=$('#symbolPanel'); if(p) p.classList.toggle('show',show);
+  if(show){
+    renderSymbolGrid();
+    const sz=symSelected?symSelected.size:symbolSize, rt=symSelected?symSelected.rot:symbolRot;
+    $('#symRotVal').textContent=rt+'°';
+    p.querySelectorAll('.sym-sz').forEach(b=>b.classList.toggle('on', +b.dataset.sz===sz));
+  }
+}
+function hitSymbol(pt){
+  const arr=strokes[inkKey()]||[];
+  for(let i=arr.length-1;i>=0;i--){ const it=arr[i]; if(it.type!=='symbol') continue;
+    const h=(it.size||44)*0.7; if(pt.x>=it.x-h&&pt.x<=it.x+h&&pt.y>=it.y-h&&pt.y<=it.y+h) return it; }
+  return null;
+}
+function symRotate(d){
+  if(symSelected){ beginInkTxn(); symSelected.rot=((symSelected.rot||0)+d+360)%360; symbolRot=symSelected.rot; redrawInk(); commitInkTxn(); }
+  else symbolRot=((symbolRot+d+360)%360);
+  $('#symRotVal').textContent=(symSelected?symSelected.rot:symbolRot)+'°';
 }
 function setViewLock(on){
   state.viewLock=on;

@@ -878,6 +878,25 @@
          この形で番号を拾うため）。番号だけにする場合は lint.js の正規表現も併せて直すこと。
        [その他] 未定義だった var(--ink2) を var(--muted2) に是正（従来は色指定が無効化されていた）。
        620px以下で階数・分類を隠す指定は .subbar → .tb-ident に追従。
+  build v7.77 (写真ごとの台帳掲載トグル／撮影者の廃止／台帳側でも区分を追加・改名)  —
+       ① 写真1枚ごとに「写真台帳に載せる/載せない」を切り替えられるように。ピンシートの各写真セルの
+          右上（削除ボタンの左隣）にトグルボタン(.photo-led)を新設。既定は「載せる」なので、除外した
+          ものだけを pin.photoOff{src:true} に持つ（pin.photoGroup と同じ、ピン単位の持ち方）。
+          除外中はボタンが赤＋斜線アイコン、セル全体を淡色化、撮影日時に打ち消し線。
+       [台帳への反映] 除外写真は台帳画面・プレビュー・PDF から消える。枠(撮影計画)に紐づいていた場合は
+          その枠を「未撮影」として残す（撮り直しが必要だと分かるように）。したがって撮影済カウントは
+          1減り未撮影が1増える。枠のない写真を除外した場合は計画・撮影済とも1減る。
+          ledgerProgress / renderLedger（区分あり・なしの両分岐）/ ledgerCells の3経路すべてで除外。
+          ピンシート側は従来どおり全部表示される（あくまで台帳に出すかどうかの指定）。
+       ② 台帳の「撮影者」欄を廃止。UI(.lmeta-field)と ledgerCells の photographer を撤去。PDF描画では
+          元々使われていなかったため出力は不変。データ構造 ledgerPinMeta / pinLedgerMeta() は過去の
+          バックアップとの互換のため残置（自動保存・GAS保存のキー構成を変えないため）。
+       ③ 撮影者の跡地に「区分」行を新設。区分チップのタップで改名、「＋ 区分を追加」で追加。編集対象は
+          ピンシート側と同じ p.groups なので、どちらから触っても同じ。区分が無いピンには
+          「まだ区分がありません」を表示。※台帳側に区分の削除は置いていない（誤操作防止。削除は
+          ピンシート側の「削除」から）。
+       ※「台帳を区分ごとに表示」は v7.72 で実装済み。区分を作っていないピンがフラットに見えるのは仕様。
+         ③で台帳側からも区分を作れるようにしたので、その場で小分け表示に切り替えられる。
 -->
 <html lang="ja">
 <head>
@@ -1371,6 +1390,15 @@
   .photo-cell .rm{position:absolute;top:5px;right:5px;width:26px;height:26px;border-radius:8px;background:rgba(10,14,20,.8);
     display:grid;place-items:center;color:#fff}
   .photo-cell .rm svg{width:14px;height:14px}
+  /* 台帳に載せる/載せない のトグル（削除ボタンの左隣） */
+  .photo-led{position:absolute;top:5px;right:36px;width:26px;height:26px;border-radius:8px;
+    background:rgba(10,14,20,.8);border:1px solid var(--line2);color:var(--muted);
+    display:grid;place-items:center}
+  .photo-led svg{width:14px;height:14px;pointer-events:none}
+  .photo-led:active{transform:scale(.9)}
+  .photo-led.off{background:rgba(240,68,56,.9);border-color:#F04438;color:#fff}
+  .photo-item.led-off .photo-cell{opacity:.5}
+  .photo-item.led-off .photo-date{opacity:.5;text-decoration:line-through}
   .photo-anno{position:absolute;right:5px;bottom:5px;width:30px;height:30px;border-radius:8px;
     background:rgba(10,14,20,.8);border:1px solid var(--line2);color:#fff;display:flex;align-items:center;justify-content:center}
   .photo-anno svg{width:16px;height:16px;pointer-events:none}
@@ -1684,7 +1712,16 @@
   .lsec-title{font-size:15px;font-weight:700;flex:1;min-width:0}
   .lsec-cnt{font-family:var(--mono);font-size:12px;color:var(--muted);flex-shrink:0}
   /* ピン共通メタ入力（工種・位置・撮影者） */
-  .lsec-meta{display:flex;flex-wrap:wrap;gap:10px;padding:12px 15px;border-bottom:1px solid var(--line)}
+  .lsec-meta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 15px;border-bottom:1px solid var(--line)}
+  .lmeta-lbl{font-size:11.5px;color:var(--muted);font-weight:600;flex-shrink:0}
+  .lgrp-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex:1;min-width:0}
+  .lgrp-chip{font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:9px;
+    background:var(--panel2);border:1px solid var(--line2);color:var(--text)}
+  .lgrp-chip:active{transform:scale(.96);background:var(--panel3)}
+  .lgrp-add{font-size:12.5px;font-weight:700;padding:7px 13px;border-radius:9px;
+    background:var(--panel3);border:1px solid var(--signal);color:#fff}
+  .lgrp-add:active{transform:scale(.96)}
+  .lgrp-none{font-size:12px;color:var(--muted2)}
   .lmeta-field{display:flex;flex-direction:column;gap:5px;flex:1;min-width:140px}
   .lmeta-field label{font-size:11.5px;color:var(--muted);font-weight:600}
   .lmeta-field input{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;
@@ -1824,7 +1861,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="ヘッダーを1段に統合（サブバー廃止・図面表示を43px拡大）">build v7.76</button>
+          data-desc="写真ごとの台帳掲載トグル／撮影者を廃止／台帳側でも区分を追加・改名">build v7.77</button>
   <button class="icon-btn lock-btn" id="btnLock" title="閲覧ロック（見るだけモード）">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
   </button>
@@ -2630,6 +2667,9 @@ let groupSeq=0;
 function newGid(){ return 'g'+Date.now().toString(36)+(++groupSeq).toString(36); } // 再読込後も衝突しない一意ID
 function pinGroups(p){ return p.groups||[]; } // 初期は空。ユーザーが「区分を追加」で作成する
 function photoGid(p,src){ return (p.photoGroup||{})[src]||null; }
+// 台帳に載せない写真（除外フラグ）。既定は「載せる」なので、除外したものだけを持つ。
+function photoOff(p,src){ return !!((p.photoOff||{})[src]); }
+function setPhotoOff(p,src,off){ p.photoOff=p.photoOff||{}; if(off) p.photoOff[src]=true; else delete p.photoOff[src]; }
 function setPhotoGid(p,src,gid){ p.photoGroup=p.photoGroup||{}; if(gid) p.photoGroup[src]=gid; else delete p.photoGroup[src]; }
 let pinPhotoTargetGid=null; // 「＋写真」を押した区分（追加時の割当先）
 function slotForSrc(dwgId,pinId,src){
@@ -2652,8 +2692,9 @@ function ledgerProgress(dwgId){
   let done=0,total=0;
   (pins[dwgId]||[]).forEach(p=>{
     const slots=planArr(dwgId,p.id);
-    total+=slots.length; done+=slots.filter(s=>s.src).length;
-    const extra=unplannedPhotos(dwgId,p).length;
+    // 「台帳に載せない」写真は撮影済に数えない（枠は残るので未撮影として見える）
+    total+=slots.length; done+=slots.filter(s=>s.src&&!photoOff(p,s.src)).length;
+    const extra=unplannedPhotos(dwgId,p).filter(src=>!photoOff(p,src)).length;
     total+=extra; done+=extra;
   });
   return {done,total,short:total-done};
@@ -3841,10 +3882,10 @@ function renderLedger(){
   pinsArr.forEach((p,pi)=>{
     const pc=p.color||DEFAULT_COLOR, ic=ICONS[p.icon]||ICONS[DEFAULT_ICON];
     const title=p.title||`ピン P${pi+1}`;
-    const pm=pinLedgerMeta(ledgerDwgId,p.id);
+    const lgroups=pinGroups(p);
     const slots=planArr(ledgerDwgId,p.id);
-    const extra=unplannedPhotos(ledgerDwgId,p);
-    const done=slots.filter(s=>s.src).length+extra.length;
+    const extra=unplannedPhotos(ledgerDwgId,p).filter(src=>!photoOff(p,src)); // 除外写真は台帳に出さない
+    const done=slots.filter(s=>s.src&&!photoOff(p,s.src)).length+extra.length;
     const total=slots.length+extra.length;
     const shortN=total-done;
     html+=`<div class="lsec" data-pin="${p.id}">
@@ -3854,7 +3895,12 @@ function renderLedger(){
         <span class="lsec-cnt ${shortN?'short':''}">${total?`${done} / ${total}`:'枠なし'}${shortN?`　未撮影 ${shortN}`:''}</span>
       </div>
       <div class="lsec-meta">
-        <div class="lmeta-field"><label>撮影者</label><input type="text" data-pmeta="photographer" data-pin="${p.id}" value="${escAttr(pm.photographer)}" placeholder="氏名"></div>
+        <span class="lmeta-lbl">区分</span>
+        <div class="lgrp-chips">
+          ${lgroups.map(g=>`<button class="lgrp-chip" data-gren2="${g.id}" data-pin="${p.id}" title="タップで改名">${escHtml(g.name)}</button>`).join('')}
+          ${lgroups.length?'':'<span class="lgrp-none">まだ区分がありません</span>'}
+          <button class="lgrp-add" data-gadd2="${p.id}">＋ 区分を追加</button>
+        </div>
       </div>
       <div class="lsec-plan">
         <span class="lsec-plan-lbl">撮影の枠を用意（先に作っておくと撮り忘れを防げます）</span>
@@ -3868,11 +3914,11 @@ function renderLedger(){
       </div>
       <div class="lphotos">`;
     // ピン内を区分ごとに小分け（区分が無ければ従来どおりフラット）
-    const lgroups=pinGroups(p);
     if(lgroups.length){
-      const items=[]; slots.forEach((sl,si)=>{ if(sl.src) items.push({src:sl.src,slot:sl,no:si+1}); });
+      const items=[]; slots.forEach((sl,si)=>{ if(sl.src&&!photoOff(p,sl.src)) items.push({src:sl.src,slot:sl,no:si+1}); });
       extra.forEach(src=>items.push({src,slot:null,no:0}));
-      const emptyItems=[]; slots.forEach((sl,si)=>{ if(!sl.src) emptyItems.push({sl,no:si+1}); });
+      // 除外された写真の枠は「未撮影」として残す（撮り直しが必要だと分かるように）
+      const emptyItems=[]; slots.forEach((sl,si)=>{ if(!sl.src||photoOff(p,sl.src)) emptyItems.push({sl,no:si+1}); });
       lgroups.forEach(gp=>{
         const its=items.filter(it=>photoGid(p,it.src)===gp.id);
         html+=`<div class="lgrp-head"><span class="lgrp-name">${escHtml(gp.name)}</span><span class="lgrp-cnt">${its.length}</span></div><div class="lgrp-photos">`;
@@ -3888,7 +3934,7 @@ function renderLedger(){
         html+=`</div>`;
       }
     } else {
-      slots.forEach((sl,si)=>{ html += sl.src ? photoCellHtml(sl.src, sl, si+1) : emptyCellHtml(sl, p.id, si+1); });
+      slots.forEach((sl,si)=>{ html += (sl.src&&!photoOff(p,sl.src)) ? photoCellHtml(sl.src, sl, si+1) : emptyCellHtml(sl, p.id, si+1); });
       extra.forEach(src=>{ html += photoCellHtml(src, null, 0); });
     }
     if(!total) html+=`<div class="lphoto-none">枠も写真もありません。上のボタンで枠を用意するか、図面のピンから写真を追加してください。</div>`;
@@ -4054,6 +4100,18 @@ function bindLedger(){
     openPanno(btn.dataset.src);
   }));
   // ピン共通メタ入力
+  // 区分の追加・改名（ピンシート側と同じデータ p.groups を編集）
+  body.querySelectorAll('[data-gadd2]').forEach(b=>b.addEventListener('click',()=>{
+    const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.gadd2); if(!p) return;
+    const n=prompt('区分の名前を入力（例：調査／工事前／工事後）','');
+    if(n&&n.trim()){ (p.groups=p.groups||[]).push({id:newGid(),name:n.trim()}); renderLedger(); }
+  }));
+  body.querySelectorAll('[data-gren2]').forEach(b=>b.addEventListener('click',()=>{
+    const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.pin); if(!p) return;
+    const g=pinGroups(p).find(x=>x.id===b.dataset.gren2); if(!g) return;
+    const n=prompt('区分の名前',g.name);
+    if(n&&n.trim()){ g.name=n.trim(); renderLedger(); }
+  }));
   body.querySelectorAll('input[data-pmeta]').forEach(inp=>inp.addEventListener('input',()=>{
     const pm=pinLedgerMeta(ledgerDwgId,inp.dataset.pin);
     pm[inp.dataset.pmeta]=inp.value;
@@ -4233,17 +4291,19 @@ function loadJsPDF(){
 function ledgerCells(){
   const cells=[];
   (pins[ledgerDwgId]||[]).forEach((p,pi)=>{
-    const pm=pinLedgerMeta(ledgerDwgId,p.id);
     const base=(meta,groupName)=>({
       title:p.title||`ピン P${pi+1}`,
-      photographer:pm.photographer,
       regDate:meta.regDate, status:meta.status, place:meta.place||'',
       lines:(meta.lines||[]).filter(l=>l.trim()!==''),
       groupName:groupName||''
     });
     const its=[];
-    planArr(ledgerDwgId,p.id).forEach(sl=>its.push({src:sl.src,meta:sl.src?photoMeta(sl.src):sl.meta,planned:true}));
-    unplannedPhotos(ledgerDwgId,p).forEach(src=>its.push({src,meta:photoMeta(src),planned:false}));
+    // 除外写真は src:null（＝未撮影の枠）として扱い、枠のない除外写真はそもそも出さない
+    planArr(ledgerDwgId,p.id).forEach(sl=>{
+      const use=sl.src&&!photoOff(p,sl.src);
+      its.push({src:use?sl.src:null, meta:use?photoMeta(sl.src):sl.meta, planned:true});
+    });
+    unplannedPhotos(ledgerDwgId,p).filter(src=>!photoOff(p,src)).forEach(src=>its.push({src,meta:photoMeta(src),planned:false}));
     const groups=pinGroups(p);
     if(groups.length){ // 区分ごとに並べ替え（各区分→未分類）。各セルに区分名を付与
       groups.forEach(g=>{ its.filter(it=>it.src&&photoGid(p,it.src)===g.id).forEach(it=>cells.push(Object.assign(base(it.meta,g.name),{src:it.src,planned:it.planned}))); });
@@ -5604,16 +5664,19 @@ function renderPhotoGrid(){
   const g=$('#photoGrid');
   const ANNO='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>';
   const RM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+  const LED_ON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>';
+  const LED_OFF='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h9M4 18h6"/><path d="M3 3l18 18"/></svg>';
   const CAM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>';
   // 区分ごとに写真を振り分け（未撮影枠・区分未設定は「未分類」へ）
   const bucket={}; groups.forEach(gp=>bucket[gp.id]=[]); const uncat=[]; const emptySlots=[];
   slots.forEach(sl=>{ if(sl.src){ const gid=photoGid(p,sl.src); (gid&&bucket[gid]?bucket[gid]:uncat).push({src:sl.src,name:sl.name}); } else { emptySlots.push(sl); } });
   extra.forEach(src=>{ const gid=photoGid(p,src); (gid&&bucket[gid]?bucket[gid]:uncat).push({src,name:''}); });
   const gOptions=(cur)=>groups.map(gp=>`<option value="${gp.id}" ${gp.id===cur?'selected':''}>${escHtml(gp.name)}</option>`).join('')+`<option value="" ${!cur?'selected':''}>未分類</option>`;
-  const cell=(o)=>{ const src=o.src, i=p.photos.indexOf(src);
-    return `<div class="photo-item"><div class="photo-cell"><img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" data-i="${i}">`
+  const cell=(o)=>{ const src=o.src, i=p.photos.indexOf(src), off=photoOff(p,src);
+    return `<div class="photo-item${off?' led-off':''}"><div class="photo-cell"><img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" data-i="${i}">`
       +`<select class="photo-gsel" data-src="${escAttr(src)}">${gOptions(photoGid(p,src))}</select>`
       +`${o.name?`<span class="photo-slot-tag">${escHtml(o.name)}</span>`:''}`
+      +`<button class="photo-led ${off?'off':''}" data-led="${escAttr(src)}" title="${off?'写真台帳に載せない（タップで載せる）':'写真台帳に載せる（タップで外す）'}">${off?LED_OFF:LED_ON}</button>`
       +`<button class="photo-anno ${hasPhotoInk(src)?'has':''}" data-anno="${escAttr(src)}" title="写真に書き込み">${ANNO}</button>`
       +`<button class="rm" data-rm="${i}">${RM}</button></div><span class="photo-date">${photoTimeLabel(src)||'\u2014'}</span></div>`;
   };
@@ -5633,6 +5696,13 @@ function renderPhotoGrid(){
   applyComposited(g); // 注釈があれば合成画像をサムネイルに反映
   g.querySelectorAll('img.lphoto-img').forEach(im=>im.addEventListener('click',()=>{ if(Date.now()-lastPhotoDragEnd<350) return; openLightbox(compositeCache[im.dataset.src]||im.dataset.src); }));
   g.querySelectorAll('.photo-anno').forEach(btn=>btn.addEventListener('click',e=>{ e.stopPropagation(); openPanno(btn.dataset.anno); }));
+  g.querySelectorAll('[data-led]').forEach(btn=>btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const src=btn.dataset.led, now=!photoOff(p,src);
+    setPhotoOff(p,src,now);
+    toast(now?'この写真は写真台帳に載せません':'この写真を写真台帳に載せます', now?'warn':'ok');
+    renderPhotoGrid();
+  }));
   g.querySelectorAll('.photo-gsel').forEach(sel=>{ sel.addEventListener('click',e=>e.stopPropagation()); sel.addEventListener('change',e=>{ e.stopPropagation(); setPhotoGid(p,sel.dataset.src,sel.value||null); renderPhotoGrid(); }); });
   g.querySelectorAll('[data-gadd]').forEach(b=>b.addEventListener('click',()=>{ pinPhotoTargetGid=b.dataset.gadd||null; $('#photoInput').click(); }));
   g.querySelectorAll('[data-gren]').forEach(b=>b.addEventListener('click',()=>{ const gp=groups.find(x=>x.id===b.dataset.gren); if(!gp)return; const n=prompt('区分の名前',gp.name); if(n&&n.trim()){ gp.name=n.trim(); renderPhotoGrid(); } }));

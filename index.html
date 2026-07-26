@@ -813,6 +813,29 @@
        写真を未分類へ退避（写真は消えない）。既存の「施工状況(前/中/後)」はそのまま併存。区分IDは時刻ベースで再読込後も
        衝突しない。#photoGrid はブロック化し内側の .photo-grid をグリッドに。pins に載るため保存/復元も自動。
 -->
+
+<!--
+  build v7.70 (メイン画面の「図面」の隣に「写真台帳」ボタンを追加)  — これまで写真台帳は図面リスト(ドロワー)の各行
+       からしか開けなかった。トップバーの「図面」ボタンの右隣に「写真台帳」ボタン(#openLedgerBtn)を新設し、
+       今開いている図面の台帳を openLedger(state.selectedId) で直接開けるように。図面未選択時はトースト案内。
+       狭い画面ではラベルを隠しアイコンのみ表示（#openSheets と同様）。
+-->
+
+<!--
+  build v7.71 (区分は自分で作成＋写真を長押しドラッグで区分へ移動)  — ①初期の固定区分(調査/工事前/工事後)を廃止し、
+       pinGroups は空で開始。ユーザーが「区分を追加」で自由に作成（区分が無い間はヒントを表示）。②iPad対応の独自
+       ドラッグ＆ドロップ：写真を長押し(240ms)するとゴーストが持ち上がり、区分セクション(.pg-section[data-gid])へ
+       ドロップで setPhotoGid で移動。ドロップ先はハイライト。すぐ動かした場合はスクロール扱いでドラッグ中止（閾値10px）。
+       ドラッグ直後のライトボックス誤発火は lastPhotoDragEnd で抑止。従来の各写真の区分セレクトも併存（確実な代替手段）。
+-->
+
+<!--
+  build v7.72 (写真台帳を区分ごとに仕分け：画面＋PDF)  — ピンで作った区分(調査/工事前/後…)で台帳を小分け。
+       ①台帳画面(renderLedger)：各ピン内を区分ごとにサブ見出し(.lgrp-head)＋写真グリッド(.lgrp-photos)で表示。順序は
+       区分→未分類（未撮影枠・区分未設定は未分類）。区分が無いピンは従来どおりフラット。②PDF出力(ledgerCells)：セルを
+       ピン内で区分順に並べ替え、各セルに groupName を付与。drawCellGroup で写真右上に区分名タグを描画（施工状況バッジ＝
+       左上とは非衝突）。プレビューも同じ ledgerCells を使うため一致。区分名はピンごとの自作名をそのまま使用。
+-->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -1294,6 +1317,11 @@
   .photo-gsel{position:absolute;left:5px;top:5px;max-width:66%;font-size:10px;font-weight:600;color:#fff;
     background:rgba(10,14,20,.8);border:1px solid var(--line2);border-radius:7px;padding:3px 5px;
     appearance:none;-webkit-appearance:none}
+  .pg-hint{font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:9px 12px;margin-bottom:12px;line-height:1.5}
+  .pg-section.drop{outline:2px dashed var(--signal);outline-offset:3px;border-radius:12px;background:rgba(127,227,192,.06)}
+  .photo-ghost{position:fixed;z-index:300;width:82px;height:62px;transform:translate(-50%,-50%);pointer-events:none;
+    border-radius:9px;overflow:hidden;box-shadow:0 10px 28px rgba(0,0,0,.55);opacity:.92;border:2px solid var(--signal)}
+  .photo-ghost img{width:100%;height:100%;object-fit:cover}
   .photo-cell{position:relative;aspect-ratio:4/3;border-radius:12px;overflow:hidden;background:var(--panel2);border:1px solid var(--line)}
   .photo-cell img{width:100%;height:100%;object-fit:cover;display:block}
   .photo-cell .rm{position:absolute;top:5px;right:5px;width:26px;height:26px;border-radius:8px;background:rgba(10,14,20,.8);
@@ -1357,6 +1385,7 @@
   @media(max-width:900px){ .net-btn .netlbl{display:none} }
   @media(max-width:620px){
     #openSheets .lbl{display:none}
+    #openLedgerBtn .lbl{display:none}
     .subbar .meta-mini{display:none}
     .role-seg button{min-width:44px;padding:0 9px}
   }
@@ -1604,6 +1633,10 @@
   .lmeta-field input:focus{outline:none;border-color:var(--signal)}
   /* 写真グリッド */
   .lphotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;padding:15px}
+  .lgrp-head{grid-column:1/-1;display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700;color:var(--text);
+    border-bottom:1px solid var(--line2);padding:2px 0 8px;margin-top:8px}
+  .lgrp-cnt{font-size:12px;font-weight:600;color:var(--muted);background:var(--panel2);border-radius:20px;padding:1px 10px}
+  .lgrp-photos{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
   .lphoto{background:var(--panel2);border:1px solid var(--line);border-radius:11px;overflow:hidden}
   .lphoto-imgwrap{position:relative}
   .lphoto-img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:var(--panel3);cursor:pointer}
@@ -1646,6 +1679,7 @@
     .ledger-out-btn span{display:none}
     .ledger-out-btn{padding:0 12px}
     .lphotos{grid-template-columns:1fr}
+    .lgrp-photos{grid-template-columns:1fr}
   }
 
   /* 写真に「書き込む」ボタンは既存の .lphoto-anno を使用（重複定義を排除） */
@@ -1714,6 +1748,10 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
     <span class="lbl">図面</span>
   </button>
+  <button class="icon-btn" id="openLedgerBtn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L6 20"/></svg>
+    <span class="lbl">写真台帳</span>
+  </button>
 
   <div class="tb-spacer"></div>
 
@@ -1731,7 +1769,7 @@
   <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
   <span class="sb-title" id="vhTitle">—</span>
   <span class="meta-mini" id="vhMeta"></span>
-  <span class="build-tag" title="機能ビルド番号">build v7.69 · ピンの写真に「区分（調査/工事前/後）」を追加</span>
+  <span class="build-tag" title="機能ビルド番号">build v7.72 · 写真台帳を区分ごとに仕分け（画面＋PDF）</span>
 </div>
 
 <!-- VIEWPORT -->
@@ -2521,7 +2559,7 @@ function photoTimeLabel(src){ // 写真の撮影日時ラベル（ts=日時、�
 // ピンの写真「区分（フェーズ）」：ピンごとに自由に追加・改名・削除。写真は src→区分ID で対応（未設定＝未分類）
 let groupSeq=0;
 function newGid(){ return 'g'+Date.now().toString(36)+(++groupSeq).toString(36); } // 再読込後も衝突しない一意ID
-function pinGroups(p){ if(!p.groups||!p.groups.length){ p.groups=[{id:newGid(),name:'調査'},{id:newGid(),name:'工事前'},{id:newGid(),name:'工事後'}]; } return p.groups; }
+function pinGroups(p){ return p.groups||[]; } // 初期は空。ユーザーが「区分を追加」で作成する
 function photoGid(p,src){ return (p.photoGroup||{})[src]||null; }
 function setPhotoGid(p,src,gid){ p.photoGroup=p.photoGroup||{}; if(gid) p.photoGroup[src]=gid; else delete p.photoGroup[src]; }
 let pinPhotoTargetGid=null; // 「＋写真」を押した区分（追加時の割当先）
@@ -3760,8 +3798,30 @@ function renderLedger(){
         </div>
       </div>
       <div class="lphotos">`;
-    slots.forEach((sl,si)=>{ html += sl.src ? photoCellHtml(sl.src, sl, si+1) : emptyCellHtml(sl, p.id, si+1); });
-    extra.forEach(src=>{ html += photoCellHtml(src, null, 0); });
+    // ピン内を区分ごとに小分け（区分が無ければ従来どおりフラット）
+    const lgroups=pinGroups(p);
+    if(lgroups.length){
+      const items=[]; slots.forEach((sl,si)=>{ if(sl.src) items.push({src:sl.src,slot:sl,no:si+1}); });
+      extra.forEach(src=>items.push({src,slot:null,no:0}));
+      const emptyItems=[]; slots.forEach((sl,si)=>{ if(!sl.src) emptyItems.push({sl,no:si+1}); });
+      lgroups.forEach(gp=>{
+        const its=items.filter(it=>photoGid(p,it.src)===gp.id);
+        html+=`<div class="lgrp-head"><span class="lgrp-name">${escHtml(gp.name)}</span><span class="lgrp-cnt">${its.length}</span></div><div class="lgrp-photos">`;
+        its.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no));
+        if(!its.length) html+=`<div class="lphoto-none">この区分の写真はまだありません。</div>`;
+        html+=`</div>`;
+      });
+      const un=items.filter(it=>{ const gid=photoGid(p,it.src); return !gid||!lgroups.find(g=>g.id===gid); });
+      if(un.length||emptyItems.length){
+        html+=`<div class="lgrp-head"><span class="lgrp-name">未分類</span><span class="lgrp-cnt">${un.length}</span></div><div class="lgrp-photos">`;
+        un.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no));
+        emptyItems.forEach(it=>html+=emptyCellHtml(it.sl,p.id,it.no));
+        html+=`</div>`;
+      }
+    } else {
+      slots.forEach((sl,si)=>{ html += sl.src ? photoCellHtml(sl.src, sl, si+1) : emptyCellHtml(sl, p.id, si+1); });
+      extra.forEach(src=>{ html += photoCellHtml(src, null, 0); });
+    }
     if(!total) html+=`<div class="lphoto-none">枠も写真もありません。上のボタンで枠を用意するか、図面のピンから写真を追加してください。</div>`;
     html+=`</div></div>`;
   });
@@ -4038,19 +4098,23 @@ function ledgerCells(){
   const cells=[];
   (pins[ledgerDwgId]||[]).forEach((p,pi)=>{
     const pm=pinLedgerMeta(ledgerDwgId,p.id);
-    const base=(meta)=>({
+    const base=(meta,groupName)=>({
       title:p.title||`ピン P${pi+1}`,
       photographer:pm.photographer,
       regDate:meta.regDate, status:meta.status, place:meta.place||'',
-      lines:(meta.lines||[]).filter(l=>l.trim()!=='')
+      lines:(meta.lines||[]).filter(l=>l.trim()!==''),
+      groupName:groupName||''
     });
-    planArr(ledgerDwgId,p.id).forEach(sl=>{
-      const meta=sl.src?photoMeta(sl.src):sl.meta;
-      cells.push(Object.assign(base(meta),{src:sl.src,planned:true}));
-    });
-    unplannedPhotos(ledgerDwgId,p).forEach(src=>{
-      cells.push(Object.assign(base(photoMeta(src)),{src,planned:false}));
-    });
+    const its=[];
+    planArr(ledgerDwgId,p.id).forEach(sl=>its.push({src:sl.src,meta:sl.src?photoMeta(sl.src):sl.meta,planned:true}));
+    unplannedPhotos(ledgerDwgId,p).forEach(src=>its.push({src,meta:photoMeta(src),planned:false}));
+    const groups=pinGroups(p);
+    if(groups.length){ // 区分ごとに並べ替え（各区分→未分類）。各セルに区分名を付与
+      groups.forEach(g=>{ its.filter(it=>it.src&&photoGid(p,it.src)===g.id).forEach(it=>cells.push(Object.assign(base(it.meta,g.name),{src:it.src,planned:it.planned}))); });
+      its.filter(it=>!it.src||!photoGid(p,it.src)||!groups.find(x=>x.id===photoGid(p,it.src))).forEach(it=>cells.push(Object.assign(base(it.meta,'未分類'),{src:it.src,planned:it.planned})));
+    } else {
+      its.forEach(it=>cells.push(Object.assign(base(it.meta,''),{src:it.src,planned:it.planned})));
+    }
   });
   return cells;
 }
@@ -4069,6 +4133,7 @@ function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
     ctx.fillText('未撮影', x+w/2, y+photoH/2);
     ctx.restore();
     drawCellStatus(ctx,cell,x,y,STATUS_LABELS);
+    drawCellGroup(ctx,cell,x,y,w);
     drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad);
     return Promise.resolve();
   }
@@ -4103,6 +4168,7 @@ function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
       ctx.strokeStyle='#333';ctx.lineWidth=1.2;
       ctx.strokeRect(x,y,w,photoH);
       drawCellStatus(ctx,cell,x,y,STATUS_LABELS);
+      drawCellGroup(ctx,cell,x,y,w);
       drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad);
       resolve();
     };
@@ -4111,6 +4177,17 @@ function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
   });
 }
 // 施工状況バッジ（セル左上）
+// 区分名タグ（写真右上）。施工状況バッジ（左上）と衝突しない位置。
+function drawCellGroup(ctx,cell,x,y,w){
+  if(!cell.groupName) return;
+  ctx.save();
+  ctx.font='bold 12px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='middle';
+  const t=cell.groupName, tw=ctx.measureText(t).width, bw=tw+14, bh=22, bx=x+w-bw-6, by=y+6;
+  ctx.fillStyle='rgba(37,99,120,.92)';
+  ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#fff'; ctx.fillText(t, bx+7, by+bh/2+1);
+  ctx.restore();
+}
 function drawCellStatus(ctx,cell,x,y,STATUS_TEXT){
   if(!(cell.status && STATUS_TEXT[cell.status])) return;
   const label=STATUS_TEXT[cell.status];
@@ -5386,8 +5463,9 @@ function renderPhotoGrid(){
     return `<div class="photo-item"><div class="photo-cell empty" data-pinshoot="${sl.id}"><div class="photo-cell-ph">${CAM}<span>未撮影</span>${stLabel?`<span class="photo-cell-status">${stLabel}</span>`:''}</div><span class="photo-slot-tag">${escHtml(sl.name||'写真')}</span></div></div>`;
   };
   let html='';
+  if(!groups.length) html+=`<div class="pg-hint">「区分を追加」で分類（例：調査／工事前／工事後）を作り、写真を長押しして区分へドラッグできます。</div>`;
   const section=(title,gid,cells)=>{
-    html+=`<div class="pg-section"><div class="pg-head"><span class="pg-name">${escHtml(title)}</span><span class="pg-tools">`;
+    html+=`<div class="pg-section" data-gid="${gid||''}"><div class="pg-head"><span class="pg-name">${escHtml(title)}</span><span class="pg-tools">`;
     if(gid){ html+=`<button class="pg-mini" data-gren="${gid}">改名</button><button class="pg-mini" data-gdel="${gid}">削除</button>`; }
     html+=`<button class="pg-add" data-gadd="${gid||''}">＋写真</button></span></div><div class="photo-grid">${cells||'<div class="pg-empty">写真なし</div>'}</div></div>`;
   };
@@ -5395,7 +5473,7 @@ function renderPhotoGrid(){
   if(uncat.length||emptySlots.length) section('未分類',null,uncat.map(cell).join('')+emptySlots.map(emptyCell).join(''));
   g.innerHTML=html;
   applyComposited(g); // 注釈があれば合成画像をサムネイルに反映
-  g.querySelectorAll('img.lphoto-img').forEach(im=>im.addEventListener('click',()=>openLightbox(compositeCache[im.dataset.src]||im.dataset.src)));
+  g.querySelectorAll('img.lphoto-img').forEach(im=>im.addEventListener('click',()=>{ if(Date.now()-lastPhotoDragEnd<350) return; openLightbox(compositeCache[im.dataset.src]||im.dataset.src); }));
   g.querySelectorAll('.photo-anno').forEach(btn=>btn.addEventListener('click',e=>{ e.stopPropagation(); openPanno(btn.dataset.anno); }));
   g.querySelectorAll('.photo-gsel').forEach(sel=>{ sel.addEventListener('click',e=>e.stopPropagation()); sel.addEventListener('change',e=>{ e.stopPropagation(); setPhotoGid(p,sel.dataset.src,sel.value||null); renderPhotoGrid(); }); });
   g.querySelectorAll('[data-gadd]').forEach(b=>b.addEventListener('click',()=>{ pinPhotoTargetGid=b.dataset.gadd||null; $('#photoInput').click(); }));
@@ -5418,7 +5496,51 @@ function renderPhotoGrid(){
     $('#pinSlotPhotoInput').click();
   }));
 }
-$('#btnAddPhoto').addEventListener('click',()=>{ const p=curPinObj(); if(!p)return; const n=prompt('新しい区分の名前（例：調査／工事前／工事後）','区分'); if(n&&n.trim()){ pinGroups(p).push({id:newGid(),name:n.trim()}); renderPhotoGrid(); } });
+$('#btnAddPhoto').addEventListener('click',()=>{ const p=curPinObj(); if(!p)return; const n=prompt('区分の名前を入力（例：調査／工事前／工事後）',''); if(n&&n.trim()){ (p.groups=p.groups||[]).push({id:newGid(),name:n.trim()}); renderPhotoGrid(); } });
+
+// ==== 写真を長押しドラッグで区分へ移動（iPadタッチ対応の独自D&D）====
+let pdrag=null, lastPhotoDragEnd=0;
+$('#photoGrid').addEventListener('pointerdown',e=>{
+  const img=e.target.closest('img.lphoto-img'); if(!img||!curPinObj()) return;
+  pdrag={ src:img.dataset.src, thumb:img.src, sx:e.clientX, sy:e.clientY, x:e.clientX, y:e.clientY, active:false };
+  pdrag.timer=setTimeout(beginPhotoDrag,240); // 長押しでドラッグ開始（すぐ動かせばスクロール）
+  window.addEventListener('pointermove',photoDragMove,{passive:false});
+  window.addEventListener('pointerup',photoDragUp);
+  window.addEventListener('pointercancel',photoDragUp);
+});
+function beginPhotoDrag(){
+  if(!pdrag) return; pdrag.active=true;
+  const g=document.createElement('div'); g.className='photo-ghost'; g.innerHTML=`<img src="${pdrag.thumb}">`;
+  document.body.appendChild(g); pdrag.ghost=g; moveGhost();
+  if(navigator.vibrate){ try{navigator.vibrate(10);}catch(_){} }
+}
+function moveGhost(){ if(pdrag&&pdrag.ghost){ pdrag.ghost.style.left=pdrag.x+'px'; pdrag.ghost.style.top=pdrag.y+'px'; } }
+function sectionAt(x,y){ if(pdrag&&pdrag.ghost) pdrag.ghost.style.display='none'; const el=document.elementFromPoint(x,y); if(pdrag&&pdrag.ghost) pdrag.ghost.style.display=''; return el&&el.closest?el.closest('.pg-section'):null; }
+function photoDragMove(e){
+  if(!pdrag) return;
+  pdrag.x=e.clientX; pdrag.y=e.clientY;
+  if(!pdrag.active){ if(Math.abs(e.clientX-pdrag.sx)>10||Math.abs(e.clientY-pdrag.sy)>10) endPhotoDrag(false); return; }
+  e.preventDefault(); moveGhost();
+  document.querySelectorAll('.pg-section.drop').forEach(s=>s.classList.remove('drop'));
+  const sec=sectionAt(e.clientX,e.clientY); if(sec) sec.classList.add('drop');
+}
+function photoDragUp(e){
+  if(!pdrag) return;
+  if(pdrag.active){
+    const sec=sectionAt(e.clientX,e.clientY);
+    if(sec){ const p=curPinObj(); if(p){ setPhotoGid(p,pdrag.src,sec.dataset.gid||null); endPhotoDrag(true); renderPhotoGrid(); return; } }
+  }
+  endPhotoDrag(pdrag.active);
+}
+function endPhotoDrag(wasActive){
+  if(pdrag){ clearTimeout(pdrag.timer); if(pdrag.ghost) pdrag.ghost.remove(); }
+  document.querySelectorAll('.pg-section.drop').forEach(s=>s.classList.remove('drop'));
+  window.removeEventListener('pointermove',photoDragMove);
+  window.removeEventListener('pointerup',photoDragUp);
+  window.removeEventListener('pointercancel',photoDragUp);
+  if(wasActive) lastPhotoDragEnd=Date.now();
+  pdrag=null;
+}
 $('#photoInput').addEventListener('change',e=>{
   const p=curPinObj();if(!p)return;
   const gid=pinPhotoTargetGid;
@@ -5996,6 +6118,11 @@ function setRole(r){ // 役割は統合済み。互換のため関数は残す�
 function openDrawer(id){$('#scrim').classList.add('show');$('#'+id).classList.add('open');}
 function closeDrawers(){$('#scrim').classList.remove('show');document.querySelectorAll('.drawer').forEach(d=>d.classList.remove('open'));}
 $('#openSheets').addEventListener('click',()=>{renderList();openDrawer('drawerSheets');});
+$('#openLedgerBtn').addEventListener('click',()=>{
+  const d=dwg();
+  if(!d){ toast('図面を選択すると写真台帳を開けます','warn'); return; }
+  openLedger(state.selectedId);
+});
 $('#openInfo').addEventListener('click',()=>{const d=dwg();$('#infoTitle').textContent=d?d.name:'図面情報';openDrawer('drawerInfo');});
 $('#scrim').addEventListener('click',closeDrawers);
 document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',closeDrawers));

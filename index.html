@@ -897,6 +897,43 @@
           ピンシート側の「削除」から）。
        ※「台帳を区分ごとに表示」は v7.72 で実装済み。区分を作っていないピンがフラットに見えるのは仕様。
          ③で台帳側からも区分を作れるようにしたので、その場で小分け表示に切り替えられる。
+  build v7.78 (図面上のピンを一時的に隠す)  — 上部バーの施錠ボタンの左にピン表示トグル(#btnPinVis)を新設。
+       1タップで図面上の全ピンをまとめて非表示／表示。朱書き・図形・シンボル・計測はそのまま見える。
+       [方式] #pinLayer に .pins-off を付けるだけ（opacity:0 + .pin の pointer-events:none）。
+       display:none にしないのは、消えている間もレイアウトと座標系を一切動かさないため（v7.34以来の方針）。
+       アイコンは非表示中だけ斜線(.pv-slash)を出し、ボタン自体も淡色にして状態が一目で分かるようにした。
+       [自動復帰] 非表示のままピンツールに切り替えると、置いたピンが見えず混乱するため、setTool('pin') で
+       自動的に表示へ戻す（「ピンを表示に戻しました」を通知）。
+       [保存しない] state.pinsHidden は自動保存・GAS保存の対象キーに含めていないので、あくまでその場限りの
+       表示設定。再読込すると必ずピンが見える状態から始まる（消したまま忘れる事故を防ぐ）。
+       ※右パネルの「ピン」タブ一覧と写真台帳は従来どおり。隠すのは図面上の見た目だけ。
+  build v7.79 (台帳掲載の切替を写真上からチェックボックスへ移設)  — v7.77で写真セルの右上に置いた
+       トグルボタン(.photo-led)を廃止し、写真の下・撮影日時の前にチェックボックス(.photo-led-cb)を設置。
+       写真そのものを隠さない配置にしてほしい、という指摘への対応。チェックあり＝台帳に載せる（既定）、
+       外すと載せない。写真は淡色化＋日時に打ち消し線で、外したことが一目で分かる。
+       [挙動] change で setPhotoOff → 並び順は変わらないので renderPhotoGrid() を呼ばず、該当セルの
+       .led-off クラスだけ差し替える。全再描画しないので長い一覧でもスクロール位置が飛ばない。
+       チェックボックスの click は stopPropagation して写真の拡大表示に伝播させない。
+       [iOS配慮] 標準の input[type=checkbox] を 19px + accent-color で使用（appearance を潰さない）。
+       label で囲って日時までタップ範囲に含め、指でも押しやすくした。長押しD&Dは img.lphoto-img
+       のみを起点にしているため、チェックボックス操作でドラッグが始まることはない。
+  build v7.80 (修正：台帳のPDF/プレビューで写真が白く抜ける)  — 一部のコマだけ写真が描かれず、罫線・注釈・
+       場所・記述だけが残る（＝写真が消えたように見える）不具合。
+       [原因] iOS Safari は画像/canvasのメモリ上限に達すると drawImage が例外も出さずに無反応になる。
+       台帳は iPhone写真（1枚12MP＝デコード後48MB前後）を28枚、1123×794のページcanvasへ SC=1.6〜2.5 倍で
+       貼るため、上限を超えた時点から「描いたつもりで真っ白」のコマが出る。onload はデコード完了を
+       保証しない点も重なる（Safariでは onload 直後の drawImage が空になり得る）。
+       [対策1] loadDecoded()：img.decode() の完了を待ってから描く。
+       [対策2] cellImage()：写真をセル寸法に見合う長辺760pxへ一度だけ縮小して cellImgCache に保持し、
+       以降はその小さいcanvasから貼る。元の巨大画像は縮小後すぐ手放す（img.src='' で解放を促す）。
+       ピーク使用量が2桁下がるので上限に届かなくなる。プレビュー→PDFでも使い回すため出力も速くなる。
+       [対策3] isBlankRegion()：描画後にそのコマを実画素で確認し、全点が真っ白なら読み込み直して1回だけ
+       描き直す（原因が別でも自力で復帰できる保険）。判定は領域を1回だけ getImageData して25点を見る。
+       [その他] 1コマ描くたびに setTimeout(0) で制御を返し、Safariが画像を解放できる隙を作る。
+       台帳を閉じたときと写真を削除したときは縮小キャッシュを破棄。
+       注釈の座標は「縮小後の寸法と切り出し範囲が同じ縮尺」なので比で相殺され、貼り位置は従来と同一。
+       ※この環境ではブラウザを起動できないため実機での再現確認は不可。対策3を入れてあるので、
+         仮に真因が別でも白抜けは自動的に描き直される。
 -->
 <html lang="ja">
 <head>
@@ -967,6 +1004,7 @@
   .role-seg button .d{width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.5}
   .role-seg button.active{background:var(--panel3);color:var(--text)}
   .role-seg button.active .d{opacity:1}
+  .pinvis-btn.pins-hidden{background:var(--panel3);color:var(--muted2);border-color:var(--line2)}
   .lock-btn.locked-on{background:#F5A524;color:#0E1218;border-color:#F5A524}
   .lock-btn.locked-on svg{color:#0E1218}
   .lock-pill{font-size:11px;font-weight:700;color:#0E1218;background:#F5A524;border-radius:6px;padding:2px 8px;white-space:nowrap;flex-shrink:0}
@@ -1259,7 +1297,10 @@
   ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px}
 
   /* ---------------- PINS ---------------- */
-  .pin-layer{position:absolute;inset:0;z-index:11;pointer-events:none}
+  .pin-layer{position:absolute;inset:0;z-index:11;pointer-events:none;transition:opacity .16s ease}
+  /* ピンの一時非表示。display:none ではなく opacity+pointer-events（当たり判定だけ確実に殺す） */
+  .pin-layer.pins-off{opacity:0}
+  .pin-layer.pins-off .pin{pointer-events:none}
   .pin{position:absolute;pointer-events:auto;transform:translate(-50%,-100%);
     display:flex;flex-direction:column;align-items:center;border:none;background:none;padding:0;transition:transform .06s}
   .pin:active{transform:translate(-50%,-100%) scale(.9)}
@@ -1390,15 +1431,11 @@
   .photo-cell .rm{position:absolute;top:5px;right:5px;width:26px;height:26px;border-radius:8px;background:rgba(10,14,20,.8);
     display:grid;place-items:center;color:#fff}
   .photo-cell .rm svg{width:14px;height:14px}
-  /* 台帳に載せる/載せない のトグル（削除ボタンの左隣） */
-  .photo-led{position:absolute;top:5px;right:36px;width:26px;height:26px;border-radius:8px;
-    background:rgba(10,14,20,.8);border:1px solid var(--line2);color:var(--muted);
-    display:grid;place-items:center}
-  .photo-led svg{width:14px;height:14px;pointer-events:none}
-  .photo-led:active{transform:scale(.9)}
-  .photo-led.off{background:rgba(240,68,56,.9);border-color:#F04438;color:#fff}
+  /* 台帳に載せる/載せない：写真の下、日時の前のチェックボックス（写真の上には何も置かない） */
+  .photo-date-row{display:flex;align-items:center;justify-content:center;gap:7px;padding:1px 0}
+  .photo-led-cb{width:19px;height:19px;flex-shrink:0;margin:0;accent-color:var(--signal)}
   .photo-item.led-off .photo-cell{opacity:.5}
-  .photo-item.led-off .photo-date{opacity:.5;text-decoration:line-through}
+  .photo-item.led-off .photo-date{opacity:.55;text-decoration:line-through}
   .photo-anno{position:absolute;right:5px;bottom:5px;width:30px;height:30px;border-radius:8px;
     background:rgba(10,14,20,.8);border:1px solid var(--line2);color:#fff;display:flex;align-items:center;justify-content:center}
   .photo-anno svg{width:16px;height:16px;pointer-events:none}
@@ -1861,7 +1898,13 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="写真ごとの台帳掲載トグル／撮影者を廃止／台帳側でも区分を追加・改名">build v7.77</button>
+          data-desc="修正：台帳PDF/プレビューで写真が白く抜ける（iOSのdrawImage無言失敗）">build v7.80</button>
+  <button class="icon-btn pinvis-btn" id="btnPinVis" title="図面上のピンを一時的に隠す／表示する">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 21s7-5.5 7-11a7 7 0 10-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>
+      <path class="pv-slash" d="M3 3l18 18" style="display:none"/>
+    </svg>
+  </button>
   <button class="icon-btn lock-btn" id="btnLock" title="閲覧ロック（見るだけモード）">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
   </button>
@@ -3664,6 +3707,8 @@ function setTool(t){
   if(t!=='symbol') symSelected=null; // シンボルツールを離れたら選択解除
   if(t!=='pen'){ penEraseMode=false; penErasing=false; } // ペン以外に移ったら消去モード解除
   polyPending=false;
+  // ピンツールに切り替えたら、隠したままだと置いたピンが見えないので自動で表示に戻す
+  if(t==='pin' && state.pinsHidden){ setPinsHidden(false,true); toast('ピンを表示に戻しました','ok'); }
   state.tool=t;
   $('#btnNav').classList.toggle('on',t==='nav');
   $('#btnPen').classList.toggle('on',t==='pen');
@@ -3858,6 +3903,7 @@ function openLedger(dwgId){
 function closeLedger(){
   $('#ledger').classList.remove('show');
   ledgerDwgId=null;
+  clearCellImgCache(); // 縮小画像を抱えたままにしない
   renderList(); // 写真枚数バッジを最新化
 }
 function renderLedger(){
@@ -4316,6 +4362,68 @@ function ledgerCells(){
 }
 
 // 1枚のセルをCanvasに描画（写真＋施工状況バッジ＋下に自由記述の複数行、外枠つき）。
+/* ===== 台帳描画用の画像ユーティリティ =====
+   iOS Safari は「巨大な画像を大量に canvas へ描く」と、画像/canvasのメモリ上限に達した時点で
+   drawImage が例外も出さずに何も描かなくなる（=セルが真っ白のまま罫線と文字だけ残る）。
+   iPhone写真は1枚12MP級＝デコード後48MB前後あり、台帳1冊で数百MBに達するため実際に踏む。
+   対策は3つ：①decode()完了を待ってから描く ②セル寸法に見合うサイズへ一度だけ縮小して使い回す
+   ③描けたかを実際に画素で確認し、真っ白なら読み込み直して1回だけ描き直す。 */
+const CELL_IMG_MAX=760;   // 縮小後の長辺px（セル幅346の約2.2倍。PDFの貼り込み画質としても十分）
+let cellImgCache={};      // src → {cv,w,h}
+function releaseImg(img){ try{ img.onload=null; img.onerror=null; img.src=''; }catch(_){} }
+function loadDecoded(src){
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    img.onload=()=>{
+      // onload だけではデコード未完了のことがある。decode() の完了まで待ってから描く。
+      if(img.decode) img.decode().then(()=>res(img)).catch(()=>res(img));
+      else res(img);
+    };
+    img.onerror=()=>rej(new Error('image load failed'));
+    img.src=src;
+  });
+}
+async function cellImage(src,force){
+  if(!force && cellImgCache[src]) return cellImgCache[src];
+  const img=await loadDecoded(src);
+  const nw=img.naturalWidth||img.width, nh=img.naturalHeight||img.height;
+  if(!nw||!nh){ releaseImg(img); throw new Error('image size unknown'); }
+  const k=Math.min(1, CELL_IMG_MAX/Math.max(nw,nh));
+  const cw=Math.max(1,Math.round(nw*k)), ch=Math.max(1,Math.round(nh*k));
+  const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+  cv.getContext('2d').drawImage(img,0,0,cw,ch);
+  releaseImg(img);                       // 大きい方はここで手放す（Safariに早く解放させる）
+  const rec={cv,w:cw,h:ch};
+  cellImgCache[src]=rec;
+  return rec;
+}
+function clearCellImgCache(){ cellImgCache={}; }
+// 指定領域が「真っ白のまま＝何も描けていない」かを実画素で判定（読み取りは1回だけ）
+function isBlankRegion(ctx,x,y,w,h){
+  try{
+    const m=ctx.getTransform?ctx.getTransform():null;
+    const sc=m?m.a:1, ox=m?m.e:0, oy=m?m.f:0;
+    const px=Math.max(0,Math.round(x*sc+ox)), py=Math.max(0,Math.round(y*sc+oy));
+    const pw=Math.max(1,Math.round(w*sc)), ph=Math.max(1,Math.round(h*sc));
+    const d=ctx.getImageData(px,py,pw,ph).data;
+    const N=5;
+    for(let i=1;i<=N;i++) for(let j=1;j<=N;j++){
+      const cx=Math.round(pw*i/(N+1)), cy=Math.round(ph*j/(N+1));
+      const o=(cy*pw+cx)*4;
+      if(!(d[o]>=250&&d[o+1]>=250&&d[o+2]>=250)) return false; // 何か描けている
+    }
+    return true;
+  }catch(_){ return false; } // 読めない環境では判定しない（再試行もしない）
+}
+// 写真をセルへ cover 配置で描き、使った切り出し範囲を返す
+function drawPhotoCover(ctx,rec,x,y,w,photoH){
+  const iw=rec.w, ih=rec.h, ar=iw/ih, boxAr=w/photoH;
+  let sx=0,sy=0,sw=iw,sh=ih;
+  if(ar>boxAr){ sw=ih*boxAr; sx=(iw-sw)/2; } else { sh=iw/boxAr; sy=(ih-sh)/2; }
+  ctx.drawImage(rec.cv,sx,sy,sw,sh,x,y,w,photoH);
+  return {sx,sy,sw,sh,iw,ih};
+}
+
 function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
   ctx.strokeStyle='#333';ctx.lineWidth=1.2;
   // 未撮影の枠：点線＋「未撮影」。施工状況・記述は書いてあれば出す。
@@ -4333,18 +4441,29 @@ function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
     drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad);
     return Promise.resolve();
   }
-  return new Promise(resolve=>{
-    const img=new Image();
-    img.onload=()=>{
+  return (async()=>{
+    let rec;
+    try{ rec=await cellImage(cell.src); }
+    catch(_){
+      ctx.strokeRect(x,y,w,photoH);
+      drawCellStatus(ctx,cell,x,y,STATUS_LABELS);
+      drawCellGroup(ctx,cell,x,y,w);
+      drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad);
+      return;
+    }
+    {
       // 写真領域（アスペクト調整してcover）
-      const iw=img.width,ih=img.height, ar=iw/ih, boxAr=w/photoH;
-      let sx=0,sy=0,sw=iw,sh=ih;
-      if(ar>boxAr){ sw=ih*boxAr; sx=(iw-sw)/2; } else { sh=iw/boxAr; sy=(ih-sh)/2; }
-      ctx.drawImage(img,sx,sy,sw,sh,x,y,w,photoH);
-      // 写真への書き込み（注釈）を重ねる。注釈は写真の自然サイズ基準（長辺1000正規化）。
+      let crop=drawPhotoCover(ctx,rec,x,y,w,photoH);
+      // 描けたか実画素で確認。真っ白なら読み込み直して1回だけ再描画（iOSのdrawImage無言失敗対策）
+      if(isBlankRegion(ctx,x,y,w,photoH)){
+        try{ rec=await cellImage(cell.src,true); crop=drawPhotoCover(ctx,rec,x,y,w,photoH); }catch(_){}
+      }
+      const {sx,sy,sw,sh}=crop;
+      // 写真への書き込み（注釈）を重ねる。注釈は写真全体（長辺1000正規化）基準。
+      // 縮小後の寸法(rec.w/rec.h)と切り出し(sw/sh)は同じ縮尺なので、比だけで正しく対応する。
       const anno=photoInk[cell.src];
       if(anno && anno.length){
-        const nw=img.naturalWidth||img.width, nh=img.naturalHeight||img.height;
+        const nw=rec.w, nh=rec.h;
         const annoAr=nw/nh;
         let alw,alh; // 注釈論理キャンバスのサイズ（sizePannoCanvasと同じ規則）
         if(nw>=nh){ alw=1000; alh=Math.round(1000/annoAr); } else { alh=1000; alw=Math.round(1000*annoAr); }
@@ -4366,11 +4485,8 @@ function drawCell(ctx,cell,x,y,w,photoH,lineH,pad){
       drawCellStatus(ctx,cell,x,y,STATUS_LABELS);
       drawCellGroup(ctx,cell,x,y,w);
       drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad);
-      resolve();
-    };
-    img.onerror=()=>{ ctx.strokeRect(x,y,w,photoH); resolve(); };
-    img.src=cell.src;
-  });
+    }
+  })();
 }
 // 施工状況バッジ（セル左上）
 // 区分名タグ（写真右上）。施工状況バッジ（左上）と衝突しない位置。
@@ -4457,6 +4573,7 @@ async function renderLedgerPage(cells,pg,pageCount,d,SC){
     const x=g.margin+col*(cellW+g.gapX);
     const y=g.gridTop+row*(cellH+g.gapY);
     await drawCell(ctx,pageCells[i],x,y,cellW,photoH,g.lineH,g.pad);
+    await new Promise(r=>setTimeout(r,0)); // 1コマごとに制御を返し、Safariに画像を解放させる
   }
   return cv;
 }
@@ -5664,8 +5781,6 @@ function renderPhotoGrid(){
   const g=$('#photoGrid');
   const ANNO='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>';
   const RM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
-  const LED_ON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>';
-  const LED_OFF='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h9M4 18h6"/><path d="M3 3l18 18"/></svg>';
   const CAM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>';
   // 区分ごとに写真を振り分け（未撮影枠・区分未設定は「未分類」へ）
   const bucket={}; groups.forEach(gp=>bucket[gp.id]=[]); const uncat=[]; const emptySlots=[];
@@ -5676,9 +5791,11 @@ function renderPhotoGrid(){
     return `<div class="photo-item${off?' led-off':''}"><div class="photo-cell"><img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" data-i="${i}">`
       +`<select class="photo-gsel" data-src="${escAttr(src)}">${gOptions(photoGid(p,src))}</select>`
       +`${o.name?`<span class="photo-slot-tag">${escHtml(o.name)}</span>`:''}`
-      +`<button class="photo-led ${off?'off':''}" data-led="${escAttr(src)}" title="${off?'写真台帳に載せない（タップで載せる）':'写真台帳に載せる（タップで外す）'}">${off?LED_OFF:LED_ON}</button>`
       +`<button class="photo-anno ${hasPhotoInk(src)?'has':''}" data-anno="${escAttr(src)}" title="写真に書き込み">${ANNO}</button>`
-      +`<button class="rm" data-rm="${i}">${RM}</button></div><span class="photo-date">${photoTimeLabel(src)||'\u2014'}</span></div>`;
+      +`<button class="rm" data-rm="${i}">${RM}</button></div>`
+      +`<label class="photo-date-row" title="チェックを外すと写真台帳に載せません">`
+      +`<input type="checkbox" class="photo-led-cb" data-led="${escAttr(src)}" ${off?'':'checked'}>`
+      +`<span class="photo-date">${photoTimeLabel(src)||'\u2014'}</span></label></div>`;
   };
   const emptyCell=(sl)=>{ const stLabel=STATUS_LABELS[sl.meta.status];
     return `<div class="photo-item"><div class="photo-cell empty" data-pinshoot="${sl.id}"><div class="photo-cell-ph">${CAM}<span>未撮影</span>${stLabel?`<span class="photo-cell-status">${stLabel}</span>`:''}</div><span class="photo-slot-tag">${escHtml(sl.name||'写真')}</span></div></div>`;
@@ -5696,13 +5813,17 @@ function renderPhotoGrid(){
   applyComposited(g); // 注釈があれば合成画像をサムネイルに反映
   g.querySelectorAll('img.lphoto-img').forEach(im=>im.addEventListener('click',()=>{ if(Date.now()-lastPhotoDragEnd<350) return; openLightbox(compositeCache[im.dataset.src]||im.dataset.src); }));
   g.querySelectorAll('.photo-anno').forEach(btn=>btn.addEventListener('click',e=>{ e.stopPropagation(); openPanno(btn.dataset.anno); }));
-  g.querySelectorAll('[data-led]').forEach(btn=>btn.addEventListener('click',e=>{
-    e.stopPropagation();
-    const src=btn.dataset.led, now=!photoOff(p,src);
-    setPhotoOff(p,src,now);
-    toast(now?'この写真は写真台帳に載せません':'この写真を写真台帳に載せます', now?'warn':'ok');
-    renderPhotoGrid();
-  }));
+  g.querySelectorAll('.photo-led-cb').forEach(cb=>{
+    cb.addEventListener('click',e=>e.stopPropagation());   // 写真タップ（拡大）に伝播させない
+    cb.addEventListener('change',e=>{
+      e.stopPropagation();
+      const src=cb.dataset.led, off=!cb.checked;
+      setPhotoOff(p,src,off);
+      const item=cb.closest('.photo-item');
+      if(item) item.classList.toggle('led-off',off);       // 並びは変わらないので再描画しない
+      toast(off?'この写真は写真台帳に載せません':'この写真を写真台帳に載せます', off?'warn':'ok');
+    });
+  });
   g.querySelectorAll('.photo-gsel').forEach(sel=>{ sel.addEventListener('click',e=>e.stopPropagation()); sel.addEventListener('change',e=>{ e.stopPropagation(); setPhotoGid(p,sel.dataset.src,sel.value||null); renderPhotoGrid(); }); });
   g.querySelectorAll('[data-gadd]').forEach(b=>b.addEventListener('click',()=>{ pinPhotoTargetGid=b.dataset.gadd||null; $('#photoInput').click(); }));
   g.querySelectorAll('[data-gren]').forEach(b=>b.addEventListener('click',()=>{ const gp=groups.find(x=>x.id===b.dataset.gren); if(!gp)return; const n=prompt('区分の名前',gp.name); if(n&&n.trim()){ gp.name=n.trim(); renderPhotoGrid(); } }));
@@ -5714,6 +5835,7 @@ function renderPhotoGrid(){
     const sl=slotForSrc(state.selectedId,p.id,p.photos[+b.dataset.rm]);
     const label=slotLabel(sl);
     const [gone]=p.photos.splice(+b.dataset.rm,1);
+    delete cellImgCache[gone];
     setPhotoGid(p,gone,null);
     detachSrcFromPlan(state.selectedId,gone); // 枠は残したまま「未撮影」へ戻す
     pinLog(p,'delete',label);
@@ -6749,6 +6871,17 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
 setInterval(()=>autosaveNow(false), 5000); // 定期保存（変化があるときだけ書き込む）
 
 $('#btnLock').addEventListener('click',()=>setViewLock(!state.viewLock));
+
+/* ---- 図面上のピンを一時的に隠す（セッション限りの表示設定。保存対象には入れない） ---- */
+function setPinsHidden(on,quiet){
+  state.pinsHidden=!!on;
+  $('#pinLayer').classList.toggle('pins-off',!!on);
+  $('#btnPinVis').classList.toggle('pins-hidden',!!on);
+  const sl=$('#btnPinVis').querySelector('.pv-slash');
+  if(sl) sl.style.display = on ? '' : 'none';
+  if(!quiet) toast(on?'図面上のピンを隠しました':'図面上のピンを表示しました', on?'warn':'ok');
+}
+$('#btnPinVis').addEventListener('click',()=>setPinsHidden(!state.pinsHidden));
 // ビルドタグは番号だけを常時表示し、内容はタップで出す（上部バーの幅を食わないため）
 $('#buildTag').addEventListener('click',e=>{
   const b=e.currentTarget;

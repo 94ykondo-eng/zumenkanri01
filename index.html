@@ -934,6 +934,22 @@
        注釈の座標は「縮小後の寸法と切り出し範囲が同じ縮尺」なので比で相殺され、貼り位置は従来と同一。
        ※この環境ではブラウザを起動できないため実機での再現確認は不可。対策3を入れてあるので、
          仮に真因が別でも白抜けは自動的に描き直される。
+  build v7.81 (シンボルパレットが図面を覆う問題を改善：カテゴリのタブ化＋選んだら自動で畳む)  —
+       パレットは width:min(94vw,760px) × max-height:46vh の中央固定で、iPad横向きだと 760×377px＝
+       画面の約3割を図面の真ん中で占有していた。
+       [① 高さの圧縮] 6カテゴリ（コンセント/スイッチ/照明/盤・機器/弱電通信/防災）を縦に全部積んでいたのを
+       横並びのタブ(.sym-tabs)にし、選択中の1カテゴリだけをグリッドに出す。.sym-grid の max-height を
+       186px（ラベルが2行に折り返しても2段ぶんが切れずに収まる高さ）に固定。最大カテゴリでも5個＝1段なので、
+       パレット全体は 377px → 約200px（タブ32＋グリッド86＋大きさ回転42＋余白）に縮む。畳めば64px。
+       初期表示のカテゴリは現在の記号が属するカテゴリを自動選択（symbolCat）。
+       [② 選んだら自動で畳む] 記号をタップした瞬間に .collapsed へ。現在の記号を描いた52pxのチップ
+       (#symExpand/.sym-collapsed-btn)だけになり、図面がほぼ全面見える。チップをタップで元の位置に展開。
+       ヘッダーの畳むボタン(#symCollapse)でも手動で収納できる。作法は .tool-panel の tp-collapsed-btn と同じ。
+       [連続配置] ツールは symbol のままなので、畳んだあとも同じ記号を何個でも続けて置ける（今までどおり）。
+       大きさ・回転を変えたいときはチップをタップして展開する。
+       [iOS配慮] レイアウトが変わるのは click ハンドラの実行後（＝そのタップは既に成立済み）なので、
+       「同じタップ中にボタンが動くと click が来ない」既知の不具合には該当しない。
+       ボタン内の svg / canvas には pointer-events:none を付与。
 -->
 <html lang="ja">
 <head>
@@ -1525,11 +1541,32 @@
   .select-bar .mb-hint{min-width:0;overflow:hidden;text-overflow:ellipsis;flex-shrink:1}
   .select-bar{max-width:calc(100vw - 24px)}
   .symbol-panel{position:absolute;bottom:112px;left:50%;transform:translateX(-50%);z-index:40;
-    display:none;flex-direction:column;gap:8px;width:min(94vw,760px);max-height:46vh;
+    display:none;flex-direction:column;gap:8px;width:min(94vw,760px);
     background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;box-shadow:0 16px 48px rgba(0,0,0,.5)}
   .symbol-panel.show{display:flex}
-  .sym-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;overflow-y:auto;padding-right:4px}
-  .sym-cat{grid-column:1/-1;font-size:12px;font-weight:700;color:var(--muted);padding:6px 2px 2px}
+  /* カテゴリのタブ行（1カテゴリだけ出すことで高さを 46vh → 実測160px前後に圧縮） */
+  .sym-head{display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .sym-tabs{display:flex;gap:6px;overflow-x:auto;flex:1;min-width:0;padding-bottom:2px}
+  .sym-tab{flex-shrink:0;height:32px;padding:0 12px;border-radius:9px;font-size:12.5px;font-weight:600;
+    background:var(--panel2);border:1px solid var(--line2);color:var(--muted);white-space:nowrap}
+  .sym-tab.on{background:var(--panel3);border-color:var(--signal);color:#fff}
+  .sym-tab:active{transform:scale(.96)}
+  .sym-collapse{flex-shrink:0;width:34px;height:32px;border-radius:9px;background:var(--panel2);
+    border:1px solid var(--line2);color:var(--muted);display:grid;place-items:center}
+  .sym-collapse svg{width:18px;height:18px;pointer-events:none}
+  .sym-collapse:active{transform:scale(.94);background:var(--panel3)}
+  .sym-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;
+    overflow-y:auto;padding-right:4px;max-height:186px}
+  /* 畳んだ状態：現在の記号だけの小さなボタン（.tool-panel の収納と同じ作法） */
+  .symbol-panel.collapsed{width:auto;padding:6px}
+  .symbol-panel.collapsed .sym-head,
+  .symbol-panel.collapsed .sym-grid,
+  .symbol-panel.collapsed .sym-ctrl{display:none}
+  .symbol-panel:not(.collapsed) .sym-collapsed-btn{display:none}
+  .sym-collapsed-btn{width:52px;height:52px;border-radius:12px;background:var(--panel2);
+    border:1px solid var(--signal);display:grid;place-items:center}
+  .sym-collapsed-btn canvas{width:36px;height:36px;pointer-events:none}
+  .sym-collapsed-btn:active{transform:scale(.92)}
   .sym-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 4px;border-radius:10px;background:var(--panel2);border:1px solid var(--line2)}
   .sym-item.on{border-color:var(--signal);background:var(--panel3)}
   .sym-item canvas{width:44px;height:44px;pointer-events:none}
@@ -1898,7 +1935,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="修正：台帳PDF/プレビューで写真が白く抜ける（iOSのdrawImage無言失敗）">build v7.80</button>
+          data-desc="シンボルパレットをカテゴリタブ化＋選んだら自動で畳む">build v7.81</button>
   <button class="icon-btn pinvis-btn" id="btnPinVis" title="図面上のピンを一時的に隠す／表示する">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 21s7-5.5 7-11a7 7 0 10-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>
@@ -2016,6 +2053,12 @@
 
   <!-- 電気シンボル パレット -->
   <div class="symbol-panel" id="symbolPanel">
+    <div class="sym-head">
+      <div class="sym-tabs" id="symTabs"></div>
+      <button class="sym-collapse" id="symCollapse" title="パレットを畳む">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
     <div class="sym-grid" id="symGrid"></div>
     <div class="sym-ctrl">
       <span class="sym-lbl">大きさ</span>
@@ -2024,6 +2067,9 @@
       <span class="sym-lbl">回転</span>
       <button class="sym-rot" id="symRotL" title="左に45°">⟲</button><b id="symRotVal">0°</b><button class="sym-rot" id="symRotR" title="右に45°">⟳</button>
     </div>
+    <button class="sym-collapsed-btn" id="symExpand" title="記号パレットを開く">
+      <canvas id="symChip" width="88" height="88"></canvas>
+    </button>
   </div>
 
   <!-- markup dock (field only) -->
@@ -3832,6 +3878,8 @@ $('#symbolPanel').querySelectorAll('.sym-sz').forEach(b=>b.addEventListener('cli
   else symbolSize=sz;
   $('#symbolPanel').querySelectorAll('.sym-sz').forEach(x=>x.classList.toggle('on',+x.dataset.sz===sz));
 }));
+$('#symCollapse').addEventListener('click',()=>setSymCollapsed(true));
+$('#symExpand').addEventListener('click',()=>setSymCollapsed(false));
 $('#symRotL').addEventListener('click',()=>symRotate(-45));
 $('#symRotR').addEventListener('click',()=>symRotate(45));
 $('#textOk').addEventListener('click',commitText);
@@ -6651,28 +6699,51 @@ function commitText(){
   closeTextEditor();
 }
 /* ===== 電気シンボル ツール ===== */
+let symbolCat=null;      // 表示中のカテゴリ（1つだけ出して高さを抑える）
+let symCollapsed=false;  // 記号を選んだあとは畳んで図面を広く使う
+function inkColorForUI(){ return getComputedStyle(document.body).getPropertyValue('--text').trim()||'#e6eaf0'; }
+function drawSymOn(cv,kind,size){
+  const cx=cv.getContext('2d'); cx.clearRect(0,0,cv.width,cv.height);
+  cx.save(); cx.translate(cv.width/2,cv.height/2);
+  drawSymbol(cx,{type:'symbol',kind,x:0,y:0,size:size||52,rot:0,color:inkColorForUI()});
+  cx.restore();
+}
+function renderSymbolTabs(){
+  const tabs=$('#symTabs'); if(!tabs) return;
+  if(!symbolCat || !SYMBOL_CATS.includes(symbolCat)) symbolCat=(SYMBOLS[symbolKind]&&SYMBOLS[symbolKind].cat)||SYMBOL_CATS[0];
+  tabs.innerHTML=SYMBOL_CATS.map(c=>`<button class="sym-tab ${c===symbolCat?'on':''}" data-cat="${escAttr(c)}">${escHtml(c)}</button>`).join('');
+  tabs.querySelectorAll('.sym-tab').forEach(b=>b.addEventListener('click',()=>{
+    symbolCat=b.dataset.cat;
+    tabs.querySelectorAll('.sym-tab').forEach(x=>x.classList.toggle('on',x.dataset.cat===symbolCat));
+    renderSymbolGrid();
+  }));
+}
 function renderSymbolGrid(){
   const grid=$('#symGrid'); if(!grid) return;
-  let html='';
-  SYMBOL_CATS.forEach(cat=>{
-    html+=`<div class="sym-cat">${cat}</div>`;
-    SYMBOL_ORDER.filter(k=>SYMBOLS[k].cat===cat).forEach(k=>{
-      html+=`<button class="sym-item ${k===symbolKind?'on':''}" data-kind="${k}"><canvas width="88" height="88" data-sk="${k}"></canvas><span>${SYMBOLS[k].label}</span></button>`;
-    });
-  });
-  grid.innerHTML=html;
-  const col=getComputedStyle(document.body).getPropertyValue('--text').trim()||'#e6eaf0';
-  grid.querySelectorAll('canvas[data-sk]').forEach(cv=>{ const cx=cv.getContext('2d'); cx.clearRect(0,0,88,88); cx.save(); cx.translate(44,44); drawSymbol(cx,{type:'symbol',kind:cv.dataset.sk,x:0,y:0,size:52,rot:0,color:col}); cx.restore(); });
+  grid.innerHTML=SYMBOL_ORDER.filter(k=>SYMBOLS[k].cat===symbolCat).map(k=>
+    `<button class="sym-item ${k===symbolKind?'on':''}" data-kind="${k}"><canvas width="88" height="88" data-sk="${k}"></canvas><span>${SYMBOLS[k].label}</span></button>`
+  ).join('');
+  grid.querySelectorAll('canvas[data-sk]').forEach(cv=>drawSymOn(cv,cv.dataset.sk));
   grid.querySelectorAll('.sym-item').forEach(b=>b.addEventListener('click',()=>{
     symbolKind=b.dataset.kind; symSelected=null; redrawInk();
     grid.querySelectorAll('.sym-item').forEach(x=>x.classList.toggle('on',x.dataset.kind===symbolKind));
+    setSymCollapsed(true); // 選んだら畳む。同じ記号を続けて何個でも置ける（ツールは symbol のまま）
   }));
+}
+function setSymCollapsed(on){
+  symCollapsed=!!on;
+  const p=$('#symbolPanel'); if(!p) return;
+  p.classList.toggle('collapsed',symCollapsed);
+  if(symCollapsed){ const chip=$('#symChip'); if(chip) drawSymOn(chip,symbolKind,60); }
+  else { renderSymbolTabs(); renderSymbolGrid(); }
 }
 function updateSymbolPanel(){
   const show=state.tool==='symbol';
   const p=$('#symbolPanel'); if(p) p.classList.toggle('show',show);
   if(show){
-    renderSymbolGrid();
+    p.classList.toggle('collapsed',symCollapsed);
+    if(symCollapsed){ const chip=$('#symChip'); if(chip) drawSymOn(chip,symbolKind,60); }
+    else { renderSymbolTabs(); renderSymbolGrid(); }
     const sz=symSelected?symSelected.size:symbolSize, rt=symSelected?symSelected.rot:symbolRot;
     $('#symRotVal').textContent=rt+'°';
     p.querySelectorAll('.sym-sz').forEach(b=>b.classList.toggle('on', +b.dataset.sz===sz));

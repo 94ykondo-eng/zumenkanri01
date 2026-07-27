@@ -979,6 +979,23 @@
        コマ全体の高さは従来と同一になるので、1ページ6コマ・総ページ数は変わらない。
        ※縦の余白は元々ぎりぎり（2段の下端764.8px / 使える下限766px）で、コマを高くすると2段目が
          はみ出すため、写真を削る以外の選択肢が無い。写真は 249px → 223px（約10%小さくなる）。
+  build v7.85 (図面のPDF出力／写真台帳の1ページ目に図面)  —
+       [合成エンジン] 画面の図面は「用紙(img か sheetSVG) + 朱書きcanvas + ピン(HTML要素)」の3層。
+       composeSheetCanvas() が1枚のcanvasにまとめる。用紙は dataURL/SVG を画像化して貼り、
+       朱書き・図形・文字・記号・計測は画面と同じ drawInkItem() をそのまま使うので見た目が一致する。
+       ピンだけは CSS で組んだ DOM のため drawPinOnCanvas() で描き直す。CSSを忠実になぞった：
+       針先基準(translate -50%,-100%)／針先を軸にした回転・拡大(transform-origin 50% 100%)／
+       42px角に border-radius 50% 50% 4px 50% を当てて45°回すしずく形／番号・写真数バッジの逆回転。
+       アイコンは ICONS の SVG 断片をそのまま data URL 化して貼るので形が完全に一致する。
+       ※画面のピンはズームしても大きさが変わらない仕様のため、そのまま出すと大きい用紙（白紙は長辺
+         1600px）で相対的に小さく写る。基準図面880pxに対する倍率kで拡大し、画面の見た目比率に合わせた。
+       [図面PDF] 右ドロワー（図面情報）に「図面をPDFで出力」を追加。ダイアログで用紙（図面の形に合わせる
+       ／A4・A3 × 縦横）とピンの有無を選べる。プレビュー付き。決まった用紙では余白24pxで縦横比を保って
+       中央に収め、「図面の形」では余白なしで原寸のまま。解像度は SC=2.5。
+       [台帳の表紙] 台帳ヘッダーに「図面を1ページ目に」トグル（既定ON）。ONのとき renderCoverPage() が
+       写真ページと同じA4横寸法で図面を1ページ丸ごと描き、総ページ数と各ページの「n / m」表示もずれない
+       ように +1 補正する。プレビュー・PDF出力の両方に反映。表紙の図面にはピンを含める（写真と番号で
+       照合するため）。
 -->
 <html lang="ja">
 <head>
@@ -1620,6 +1637,9 @@
   @media(max-width:560px){ .measure-bar .mb-hint{display:none} }
 
   /* ===== calibration dialog ===== */
+  .info-actions{padding:10px 14px 0}
+  .info-actions .btn-outline{width:100%;height:44px;display:flex;align-items:center;justify-content:center;gap:8px}
+  .info-actions .btn-outline svg{width:17px;height:17px;flex-shrink:0}
   .cal-scrim{position:fixed;inset:0;background:rgba(6,9,13,.62);backdrop-filter:blur(3px);
     z-index:120;display:none;align-items:center;justify-content:center;padding:20px}
   .cal-scrim.show{display:flex}
@@ -1760,6 +1780,8 @@
     padding-top:calc(10px + var(--safe-t));
     background:linear-gradient(180deg,#1A222D,#12181F);border-bottom:1px solid var(--line)}
   .ledger-topbar h2{font-size:16px;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ledger-cover-btn{background:var(--panel2);border:1px solid var(--line2);color:var(--muted)}
+  .ledger-cover-btn.on{background:var(--panel3);border-color:var(--signal);color:#fff}
   .ledger-topbar h2 .sub{font-size:12px;color:var(--muted);font-weight:500;margin-left:8px}
   .ledger-out-btn{height:44px;padding:0 14px;border-radius:11px;font-size:13px;font-weight:700;
     display:flex;align-items:center;gap:7px;transition:transform .08s}
@@ -1968,7 +1990,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="追加した写真にも「内容」欄／PDFにも「内容」行を追加">build v7.84</button>
+          data-desc="図面のPDF出力／写真台帳の1ページ目に図面を追加">build v7.85</button>
   <button class="icon-btn pinvis-btn" id="btnPinVis" title="図面上のピンを一時的に隠す／表示する">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 21s7-5.5 7-11a7 7 0 10-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>
@@ -2205,6 +2227,12 @@
   <div class="drawer-head">
     <h2 id="infoTitle">図面情報</h2>
     <button class="close-x" data-close="drawerInfo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+  </div>
+  <div class="info-actions">
+    <button class="btn-outline" id="btnDwgPdf">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+      図面をPDFで出力
+    </button>
   </div>
   <div class="ctx-tabs" id="ctxTabs">
     <button data-tab="ver" class="active">バージョン</button>
@@ -2483,6 +2511,45 @@
   </div>
 </div>
 
+<!-- 図面PDF出力ダイアログ -->
+<div class="cal-scrim" id="dxScrim">
+  <div class="cal-box">
+    <div class="cal-head">
+      <h3>図面をPDFで出力</h3>
+      <button class="close-x" id="dxClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <p class="cal-desc">朱書き・図形・文字・記号・計測はそのまま出力されます。</p>
+    <div class="imp-preview" id="dxPreview"><span class="ph">…</span></div>
+    <div class="cal-fields">
+      <div class="cal-field">
+        <label class="cal-lbl" for="dxPaper">用紙サイズ</label>
+        <div class="cal-field-in" style="flex:0 0 210px">
+          <select id="dxPaper" class="cal-unit" style="flex:1;height:40px">
+            <option value="fit">図面の形に合わせる</option>
+            <option value="A4land">A4 横</option>
+            <option value="A4port">A4 縦</option>
+            <option value="A3land">A3 横</option>
+            <option value="A3port">A3 縦</option>
+          </select>
+        </div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="dxPins">ピン</label>
+        <div class="cal-field-in" style="flex:0 0 210px">
+          <select id="dxPins" class="cal-unit" style="flex:1;height:40px">
+            <option value="1">含める（番号つき）</option>
+            <option value="0">含めない</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="cal-actions imp-actions">
+      <button class="btn-cancel" id="dxCancel">キャンセル</button>
+      <button class="btn-primary" id="dxGo">PDFを出力</button>
+    </div>
+  </div>
+</div>
+
 <!-- clear-all confirm dialog -->
 <div class="confirm-scrim" id="clearScrim">
   <div class="confirm-box">
@@ -2541,6 +2608,10 @@
   <div class="ledger-topbar">
     <h2 id="ledgerTitle">写真台帳<span class="sub" id="ledgerSub"></span></h2>
     <div class="ledger-prog" id="ledgerProg"></div>
+  <button class="ledger-out-btn ledger-cover-btn on" id="ledgerCover" title="台帳の1ページ目に図面を入れる">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+    <span>図面を1ページ目に</span>
+  </button>
     <button class="ledger-out-btn ledger-out-preview" id="ledgerPreview">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
       <span>プレビュー</span>
@@ -4394,16 +4465,193 @@ $('#slotPhotoInput').addEventListener('change',e=>{
 
 $('#ledgerClose').addEventListener('click',closeLedger);
 $('#ledgerPdf').addEventListener('click',()=>exportLedgerPDF());
+$('#ledgerCover').addEventListener('click',()=>{
+  ledgerCover=!ledgerCover;
+  $('#ledgerCover').classList.toggle('on',ledgerCover);
+  toast(ledgerCover?'1ページ目に図面を入れます':'図面ページを入れません', ledgerCover?'ok':'warn');
+});
 $('#ledgerPreview').addEventListener('click',()=>openLedgerPreview());
 $('#lpvClose').addEventListener('click',closeLedgerPreview);
 $('#lpvPdf').addEventListener('click',()=>exportLedgerPDF());
 $('#ledgerXlsx').addEventListener('click',()=>toast('Excel出力は次のステップで実装予定です','warn'));
+
+/* ---------------- 図面PDF出力 ---------------- */
+const DX_PAPER={ // 96dpi相当のpx（jsPDFは unit:'px' で扱う）
+  A4land:{w:1123,h:794}, A4port:{w:794,h:1123},
+  A3land:{w:1587,h:1123}, A3port:{w:1123,h:1587}
+};
+function openDwgExport(){
+  const d=dwg(); if(!d){ toast('図面が選択されていません','warn'); return; }
+  $('#dxScrim').classList.add('show');
+  renderDxPreview();
+}
+function closeDwgExport(){ $('#dxScrim').classList.remove('show'); $('#dxPreview').innerHTML='<span class="ph">…</span>'; }
+async function renderDxPreview(){
+  const d=dwg(); if(!d) return;
+  const host=$('#dxPreview'); host.innerHTML='<span class="ph">プレビューを作成中…</span>';
+  try{
+    const cv=await composeSheetCanvas(d,{scale:0.9,pins:$('#dxPins').value==='1'});
+    if(!$('#dxScrim').classList.contains('show')) return;
+    cv.style.maxWidth='100%'; cv.style.maxHeight='100%'; cv.style.objectFit='contain';
+    host.innerHTML=''; host.appendChild(cv);
+  }catch(_){ host.innerHTML='<span class="ph">プレビューを作成できませんでした</span>'; }
+}
+async function exportDwgPDF(){
+  const d=dwg(); if(!d) return;
+  const paperKey=$('#dxPaper').value, withPins=$('#dxPins').value==='1';
+  await withBusy('図面PDFを生成中…', async()=>{
+    try{ busyProgress('ライブラリを準備中'); await loadJsPDF(); }
+    catch(e){ toast('PDF用ライブラリの読み込みに失敗しました（通信環境をご確認ください）','warn'); return; }
+    busyProgress('図面を描画中'); await nextPaint();
+    const cv=await composeSheetCanvas(d,{scale:2.5,pins:withPins});
+    const { jsPDF } = window.jspdf;
+    const sw=(d.sheetW||BASE_CW), sh=(d.sheetH||BASE_CH);
+    let pw,ph,dx,dy,dw,dh;
+    if(paperKey==='fit'){            // 用紙＝図面の形。余白なしでぴったり
+      pw=sw; ph=sh; dx=0; dy=0; dw=sw; dh=sh;
+    }else{                            // 決まった用紙に、縦横比を保って収める
+      const pp=DX_PAPER[paperKey]||DX_PAPER.A4land;
+      pw=pp.w; ph=pp.h;
+      const M=24, availW=pw-M*2, availH=ph-M*2;
+      const k=Math.min(availW/sw, availH/sh);
+      dw=sw*k; dh=sh*k; dx=(pw-dw)/2; dy=(ph-dh)/2;
+    }
+    busySetLabel('PDFを書き出し中…'); busyProgress(''); await nextPaint();
+    const pdf=new jsPDF({orientation:(pw>=ph?'landscape':'portrait'),unit:'px',format:[pw,ph]});
+    if(paperKey!=='fit'){ pdf.setFillColor(255,255,255); pdf.rect(0,0,pw,ph,'F'); }
+    pdf.addImage(cv.toDataURL('image/jpeg',0.9),'JPEG',dx,dy,dw,dh);
+    pdf.save(`図面_${d.name.replace(/\s+/g,'_')}_${todayStr()}.pdf`);
+    toast('図面PDFを出力しました','ok');
+    closeDwgExport();
+  });
+}
+$('#btnDwgPdf').addEventListener('click',openDwgExport);
+$('#dxClose').addEventListener('click',closeDwgExport);
+$('#dxCancel').addEventListener('click',closeDwgExport);
+$('#dxScrim').addEventListener('click',e=>{ if(e.target===$('#dxScrim')) closeDwgExport(); });
+$('#dxPins').addEventListener('change',renderDxPreview);
+$('#dxGo').addEventListener('click',exportDwgPDF);
 
 /* ===== PDF出力 =====
    日本語フォント埋め込みの問題を避けるため、各ページを Canvas に描画（日本語は
    ブラウザ標準フォントでそのまま描ける）→ その画像を jsPDF に貼る方式。
    jsPDF は出力時にCDNから動的読み込み（アプリ本体は軽いまま／オフライン時は出力のみ不可）。 */
 let jsPDFLoading=null;
+/* ================= 図面を1枚の画像に合成（PDF出力・台帳の表紙で共用） =================
+   画面の図面は「用紙(img or SVG) + 朱書きcanvas + ピン(HTML要素)」の3層でできている。
+   前2つはそのまま canvas に写せるが、ピンだけは CSS で組んだ DOM なので canvas で描き直す。 */
+const PIN_BODY=42;            // .pin .body の一辺（CSS実測値）
+function svgToDataUrl(svg){ return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg); }
+// ピンのアイコン(ICONS)は 24x24 viewBox の SVG 断片。SVGのまま画像化すると形が完全に一致する。
+function pinIconImage(iconKey){
+  const ic=ICONS[iconKey]||ICONS[DEFAULT_ICON];
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="96" height="96" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${ic}</svg>`;
+  return loadDecoded(svgToDataUrl(svg));
+}
+function roundRectPath(c,x,y,w,h,r){ // r=[tl,tr,br,bl]
+  c.beginPath();
+  c.moveTo(x+r[0],y);
+  c.lineTo(x+w-r[1],y); c.quadraticCurveTo(x+w,y,x+w,y+r[1]);
+  c.lineTo(x+w,y+h-r[2]); c.quadraticCurveTo(x+w,y+h,x+w-r[2],y+h);
+  c.lineTo(x+r[3],y+h);   c.quadraticCurveTo(x,y+h,x,y+h-r[3]);
+  c.lineTo(x,y+r[0]);     c.quadraticCurveTo(x,y,x+r[0],y);
+  c.closePath();
+}
+/* 1本のピンを描く。座標系は図面と同じ（p.x,p.y が針先）。
+   画面の CSS を忠実になぞる：
+     .pin      translate(-50%,-100%)          → 針先が基準点、本体はその上
+     .swing    rotate(ang) scale(psc) 原点50% 100% → 針先を軸に回転・拡大
+     .body     42x42 / border-radius 50% 50% 4px 50% / rotate(45deg) → しずく形
+     .num/.cam は逆回転して常に正立 */
+async function drawPinOnCanvas(c,p,idx,k){
+  const S=PIN_BODY*k, ang=(p.angle||0)*Math.PI/180, psc=(p.pinScale||1)*k;
+  const col=p.color||DEFAULT_COLOR;
+  c.save();
+  c.translate(p.x,p.y);
+  c.rotate(ang); c.scale(p.pinScale||1,p.pinScale||1);
+  // 本体（中心は針先の S/2 上）
+  c.save();
+  c.translate(0,-S/2);
+  c.save(); c.rotate(Math.PI/4);
+  roundRectPath(c,-S/2,-S/2,S,S,[S/2,S/2,4*k,S/2]);
+  c.fillStyle=col;
+  c.shadowColor='rgba(0,0,0,.45)'; c.shadowBlur=14*k; c.shadowOffsetY=5*k;
+  c.fill();
+  c.shadowColor='transparent'; c.shadowBlur=0; c.shadowOffsetY=0;
+  c.lineWidth=2*k; c.strokeStyle='rgba(255,255,255,.35)'; c.stroke();
+  c.restore();
+  // アイコン（常に正立＝ピンの回転を打ち消す）
+  try{
+    const im=await pinIconImage(p.icon);
+    c.save(); c.rotate(-ang); const IS=20*k; c.drawImage(im,-IS/2,-IS/2,IS,IS); c.restore();
+  }catch(_){}
+  c.restore();
+  // 番号バッジ（.num: top:-6 right:-6, 高さ20, 最小幅20）
+  c.save();
+  c.translate(S/2-6*k, -S-6*k+10*k); // バッジ中心
+  c.rotate(-ang);
+  c.font=`700 ${11*k}px ui-monospace,monospace`;
+  const t=String(idx+1), tw=c.measureText(t).width, bw=Math.max(20*k,tw+8*k), bh=20*k;
+  roundRectPath(c,-bw/2,-bh/2,bw,bh,[bh/2,bh/2,bh/2,bh/2]);
+  c.fillStyle='#0E1218'; c.fill();
+  c.lineWidth=1.5*k; c.strokeStyle=col; c.stroke();
+  c.fillStyle='#fff'; c.textAlign='center'; c.textBaseline='middle';
+  c.fillText(t,0,0.5*k);
+  c.restore();
+  // 写真枚数バッジ（.cam: bottom:8 right:-8）
+  if(p.photos&&p.photos.length){
+    c.save();
+    c.translate(S/2+8*k-14*k, -8*k-8*k);
+    c.rotate(-ang);
+    c.font=`700 ${10*k}px ui-monospace,monospace`;
+    const t2=String(p.photos.length), tw2=c.measureText(t2).width;
+    const bw2=tw2+22*k, bh2=17*k;
+    roundRectPath(c,-bw2/2,-bh2/2,bw2,bh2,[8*k,8*k,8*k,8*k]);
+    c.fillStyle='#0E1218'; c.fill();
+    c.lineWidth=1.5*k; c.strokeStyle='#fff'; c.stroke();
+    // カメラの絵は小さすぎるので丸だけの簡略表現にする（PDFでの視認性を優先）
+    c.strokeStyle='#fff'; c.lineWidth=1.4*k;
+    c.beginPath(); c.arc(-bw2/2+7*k,0,3.2*k,0,Math.PI*2); c.stroke();
+    c.fillStyle='#fff'; c.textAlign='center'; c.textBaseline='middle';
+    c.fillText(t2, bw2/2-7*k, 0.5*k);
+    c.restore();
+  }
+  c.restore();
+}
+/* 図面まるごとを1枚の canvas に。SC は解像度倍率。 */
+async function composeSheetCanvas(d, opts){
+  opts=opts||{};
+  const SC=opts.scale||2;
+  const W=(d&&d.sheetW)||BASE_CW, H=(d&&d.sheetH)||BASE_CH;
+  const cv=document.createElement('canvas');
+  cv.width=Math.round(W*SC); cv.height=Math.round(H*SC);
+  const c=cv.getContext('2d');
+  c.scale(SC,SC);
+  c.fillStyle='#fff'; c.fillRect(0,0,W,H);
+  // 表示中の版を画面と同じ規則で解決する（inkKey() と必ず一致させる）
+  const v=(d.id===state.selectedId)
+    ? (viewingVerObj()||{})
+    : ((publishedVer(d)||(d.versions||[])[(d.versions||[]).length-1])||{});
+  // ① 用紙：取り込み/白紙は dataURL、既定図面は sheetSVG() の文字列を画像化
+  try{
+    const src=d.sheetSrc || svgToDataUrl(sheetSVG(v.diff).replace('<svg ','<svg xmlns="http://www.w3.org/2000/svg" '));
+    const img=await loadDecoded(src);
+    c.drawImage(img,0,0,W,H);
+    releaseImg(img);
+  }catch(_){}
+  // ② 朱書き・図形・文字・記号・計測（画面と同じ drawInkItem を使うので見た目が一致する）
+  const key=d.id+'@'+v.v;
+  (strokes[key]||[]).forEach(item=>{ try{ drawInkItem(c,item,{item:null,hoverPt:null}); }catch(_){} });
+  // ③ ピン（任意）。画面のピンはズームしても大きさが変わらないため、用紙が大きいほど相対的に
+  //    小さく写ってしまう。基準図面(880px)に対する倍率 k で拡大し、見た目の比率を画面に合わせる。
+  if(opts.pins!==false){
+    const list=(pins[d.id]||[]);
+    const k=Math.max(1, Math.max(W,H)/BASE_CW);
+    for(let i=0;i<list.length;i++) await drawPinOnCanvas(c,list[i],i,k);
+  }
+  return cv;
+}
+
 function loadJsPDF(){
   if(window.jspdf&&window.jspdf.jsPDF) return Promise.resolve();
   if(jsPDFLoading) return jsPDFLoading;
@@ -4645,6 +4893,32 @@ function lpageGeom(){
   return {cellW,photoH,cellH,perPage:g.COLS*g.ROWS};
 }
 // 1ページ分をCanvasに描いて返す（SC＝実寸に対する解像度倍率）
+let ledgerCover=true;  // 台帳の1ページ目に図面を入れるか
+/* 台帳の表紙＝図面を1ページ丸ごと。ページ寸法は写真ページと同じ（A4横相当）。 */
+async function renderCoverPage(d,pageCount,SC){
+  const g=LPAGE;
+  const cv=document.createElement('canvas');
+  cv.width=Math.round(g.pageW*SC); cv.height=Math.round(g.pageH*SC);
+  const ctx=cv.getContext('2d');
+  ctx.scale(SC,SC);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,g.pageW,g.pageH);
+  ctx.fillStyle='#111';ctx.font='bold 18px sans-serif';ctx.textBaseline='alphabetic';ctx.textAlign='left';
+  ctx.fillText(`写真台帳　${d.name}（${d.floor}）`, g.margin, 24);
+  ctx.font='12px sans-serif';ctx.fillStyle='#666';
+  ctx.fillText(`1 / ${pageCount}`, g.pageW-g.margin-40, 24);
+  ctx.strokeStyle='#111';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(g.margin,32);ctx.lineTo(g.pageW-g.margin,32);ctx.stroke();
+  // 図面本体：ヘッダーの下に、縦横比を保って最大で収める
+  const top=g.gridTop, availW=g.pageW-g.margin*2, availH=g.pageH-top-g.margin;
+  try{
+    const sheet=await composeSheetCanvas(d,{scale:2,pins:true});
+    const sw=(d.sheetW||BASE_CW), sh=(d.sheetH||BASE_CH);
+    const k=Math.min(availW/sw, availH/sh);
+    const dw=sw*k, dh=sh*k, dx=g.margin+(availW-dw)/2, dy=top+(availH-dh)/2;
+    ctx.drawImage(sheet,dx,dy,dw,dh);
+    ctx.strokeStyle='#333'; ctx.lineWidth=1.2; ctx.strokeRect(dx,dy,dw,dh);
+  }catch(_){}
+  return cv;
+}
 async function renderLedgerPage(cells,pg,pageCount,d,SC){
   const g=LPAGE, {cellW,photoH,cellH,perPage}=lpageGeom();
   const cv=document.createElement('canvas');
@@ -4656,9 +4930,10 @@ async function renderLedgerPage(cells,pg,pageCount,d,SC){
   ctx.fillStyle='#111';ctx.font='bold 18px sans-serif';ctx.textBaseline='alphabetic';ctx.textAlign='left';
   ctx.fillText(`写真台帳　${d.name}（${d.floor}）`, g.margin, 24);
   ctx.font='12px sans-serif';ctx.fillStyle='#666';
-  ctx.fillText(`${pg+1} / ${pageCount}`, g.pageW-g.margin-40, 24);
+  ctx.fillText(`${pg+1+(ledgerCover?1:0)} / ${pageCount}`, g.pageW-g.margin-40, 24);
   ctx.strokeStyle='#111';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(g.margin,32);ctx.lineTo(g.pageW-g.margin,32);ctx.stroke();
   const pageCells=cells.slice(pg*perPage,(pg+1)*perPage);
+
   for(let i=0;i<pageCells.length;i++){
     const col=i%g.COLS, row=Math.floor(i/g.COLS);
     const x=g.margin+col*(cellW+g.gapX);
@@ -4828,7 +5103,8 @@ async function openLedgerPreview(){
   if(!cells.length){ toast('写真も枠もないためプレビューできません','warn'); return; }
   lpvCells=cells;
   const {perPage}=lpageGeom();
-  const pageCount=Math.ceil(cells.length/perPage);
+  const photoPages=Math.ceil(cells.length/perPage);
+  const pageCount=photoPages+(ledgerCover?1:0);
   const pr=ledgerProgress(ledgerDwgId);
   $('#lpvSub').textContent=`${d.name} · 全${pageCount}ページ / ${cells.length}コマ`+(pr.short?`（未撮影 ${pr.short}）`:'');
   $('#lpvBody').innerHTML='<div class="lpv-loading">プレビューを作成中…</div>';
@@ -4842,7 +5118,9 @@ async function openLedgerPreview(){
   try{
   for(let pg=0;pg<pageCount;pg++){
     if(busyOn) busyProgress(`${pg+1}/${pageCount}ページ`);
-    const cv=await renderLedgerPage(cells,pg,pageCount,d,1.6); // 画面表示用の倍率
+    const cv=(ledgerCover&&pg===0)
+      ? await renderCoverPage(d,pageCount,1.6)
+      : await renderLedgerPage(cells,pg-(ledgerCover?1:0),pageCount,d,1.6); // 画面表示用の倍率
     if(!$('#lpv').classList.contains('show')) return; // 生成中に閉じられたら中断
     if(pg===0) $('#lpvBody').innerHTML='';
     const wrap=document.createElement('div');
@@ -4867,7 +5145,8 @@ async function exportLedgerPDF(){
   if(!cells.length){ toast('写真も枠もないため出力できません','warn'); return; }
   if(!state.online){ toast('PDF出力はオンライン時のみ利用できます','warn'); return; }
   const g=LPAGE, {perPage}=lpageGeom();
-  const pageCount=Math.ceil(cells.length/perPage);
+  const photoPages=Math.ceil(cells.length/perPage);
+  const pageCount=photoPages+(ledgerCover?1:0);
   await withBusy('PDFを生成中…', async()=>{
     try{
       busyProgress('ライブラリを準備中');
@@ -4882,7 +5161,9 @@ async function exportLedgerPDF(){
     for(let pg=0;pg<pageCount;pg++){
       busyProgress(`${pg+1}/${pageCount}ページ`);
       await nextPaint();  // 各ページの描画前に進捗を画面へ反映
-      const cv=await renderLedgerPage(cells,pg,pageCount,d,SC);
+      const cv=(ledgerCover&&pg===0)
+        ? await renderCoverPage(d,pageCount,SC)
+        : await renderLedgerPage(cells,pg-(ledgerCover?1:0),pageCount,d,SC);
       const imgData=cv.toDataURL('image/jpeg',0.85);
       if(pg>0) pdf.addPage([g.pageW,g.pageH],'landscape');
       pdf.addImage(imgData,'JPEG',0,0,g.pageW,g.pageH);

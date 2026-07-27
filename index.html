@@ -950,6 +950,35 @@
        [iOS配慮] レイアウトが変わるのは click ハンドラの実行後（＝そのタップは既に成立済み）なので、
        「同じタップ中にボタンが動くと click が来ない」既知の不具合には該当しない。
        ボタン内の svg / canvas には pointer-events:none を付与。
+  build v7.82 (ツール切替時の説明トーストを廃止)  — ペン・図形・ピン・計測・選択・文字・シンボルの7ツールで
+       出していた操作説明のトーストを撤去。図面の下部を大きく覆い、切り替えるたびに毎回出るため邪魔だった。
+       撤去したのは setTool() 内の説明のみ。①操作できない理由の警告（editBlockReason／旧版閲覧中など）
+       ②実行結果の通知（「文字を配置しました」「PDFを出力しました」等）③エラー通知 は従来どおり出る。
+  build v7.83 (修正：上部バーのボタンが潰れて見える)  — 上部バーのアイコンが縦に押しつぶされ、バーから
+       はみ出して表示される不具合。
+       [原因] .topbar は box-sizing:border-box で height:60px 固定のまま padding-top に safe-area を
+       足していた。中身に使える高さ = 60 − 6 − (6 + safe-area) = 48 − safe-area となり、safe-area が
+       0 のときだけ 48px のボタンがぴったり収まる設計になっていた。iPad実機では safe-area-inset-top が
+       0 でないため、そのぶん中身が削られ、48pxのボタンが枠を超えて潰れて見えていた。
+       v7.76 でサブバーを統合し、この1段に全部載せたことで目立つようになった（バー自体は以前から同じ）。
+       [修正] height を calc(60px + var(--safe-t)) にして、セーフエリアぶんはバーの高さを増やす方向に。
+       中身の高さは常に 48px 確保される。他のバー（.drawer-head / .lpv-topbar / .ledger-topbar /
+       .panno-top）は height 未指定で中身に合わせて伸びるため、同じ問題は無く変更不要。
+       [併せて] 横向きのセーフエリア（env(safe-area-inset-left/right)）も左右のpaddingに加算し、
+       端の丸角で図面/写真台帳ボタンや右端のボタンが欠けないように。
+       .icon-btn に flex-shrink:0 を付与し、幅が詰まったときに横方向へ潰れることも防止。
+  build v7.84 (追加した写真にも「内容」／PDFにも「内容」行)  —
+       [画面] これまで「内容」は撮影枠(slot)に紐づく写真にしか出ておらず、あとから追加した写真（枠のない
+       写真）には入力欄が無かった。枠のない写真では photoMeta に name を持たせ、同じ位置に「内容」欄を出す。
+       枠つきの写真は従来どおり枠の名前(sl.name)を編集する（撮影前に書いた計画名と二重管理にしない）。
+       旧データ互換のため photoMeta() で name 未定義なら '' を補完。
+       [PDF] これまで「内容」は画面だけの項目でPDFに一切出ていなかったため、場所の上に「内容」行を追加。
+       drawCellLines のラベル付き1行描画を labeled() に共通化し、内容→場所の順で描く。
+       cell.name は「枠の名前があればそれ、無ければ写真メタの name」。
+       [レイアウト] 行を1つ増やすぶん、写真の高さを1行(26px)ぶん削る（photoH = cellW*0.72 - lineH）。
+       コマ全体の高さは従来と同一になるので、1ページ6コマ・総ページ数は変わらない。
+       ※縦の余白は元々ぎりぎり（2段の下端764.8px / 使える下限766px）で、コマを高くすると2段目が
+         はみ出すため、写真を削る以外の選択肢が無い。写真は 249px → 223px（約10%小さくなる）。
 -->
 <html lang="ja">
 <head>
@@ -985,13 +1014,17 @@
   .mono{font-family:var(--mono)}
 
   /* ---------------- TOP BAR ---------------- */
+  /* 高さは「中身60px＋セーフエリア」。box-sizing:border-box なので height を固定したままだと
+     padding-top に safe-area を足したぶん中身の高さが削られ、48pxのボタンがはみ出して潰れて見える。 */
   .topbar{
-    display:flex;align-items:center;gap:10px;padding:6px 12px;height:60px;flex-shrink:0;z-index:50;
-    padding-top:calc(6px + var(--safe-t));
+    display:flex;align-items:center;gap:10px;padding:6px 12px;flex-shrink:0;z-index:50;
+    height:calc(60px + var(--safe-t));padding-top:calc(6px + var(--safe-t));
+    padding-left:calc(12px + env(safe-area-inset-left,0px));
+    padding-right:calc(12px + env(safe-area-inset-right,0px));
     background:linear-gradient(180deg,#1A222D,#12181F);border-bottom:1px solid var(--line);
   }
   .icon-btn{
-    height:48px;min-width:48px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);
+    height:48px;min-width:48px;flex-shrink:0;border-radius:12px;background:var(--panel2);border:1px solid var(--line);
     display:flex;align-items:center;justify-content:center;gap:8px;padding:0 12px;
     color:var(--text);font-size:13px;font-weight:500;transition:transform .08s, background .12s;
   }
@@ -1935,7 +1968,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="シンボルパレットをカテゴリタブ化＋選んだら自動で畳む">build v7.81</button>
+          data-desc="追加した写真にも「内容」欄／PDFにも「内容」行を追加">build v7.84</button>
   <button class="icon-btn pinvis-btn" id="btnPinVis" title="図面上のピンを一時的に隠す／表示する">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 21s7-5.5 7-11a7 7 0 10-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>
@@ -2813,10 +2846,11 @@ function detachSrcFromPlan(dwgId,src){
 // 写真のメタを取得（無ければ初期化して返す）。登録日は初回アクセス時に今日で確定。
 // status は施工状況（''|before|during|after）、lines は写真下の自由記述（複数行）。
 function photoMeta(src){
-  if(!ledgerPhotoMeta[src]) ledgerPhotoMeta[src]={status:'',place:'',lines:[''],regDate:todayStr()};
-  // 旧データ互換：status / place が無い場合は補完
+  if(!ledgerPhotoMeta[src]) ledgerPhotoMeta[src]={name:'',status:'',place:'',lines:[''],regDate:todayStr()};
+  // 旧データ互換：status / place / name が無い場合は補完
   if(ledgerPhotoMeta[src].status===undefined) ledgerPhotoMeta[src].status='';
   if(ledgerPhotoMeta[src].place===undefined) ledgerPhotoMeta[src].place='';
+  if(ledgerPhotoMeta[src].name===undefined) ledgerPhotoMeta[src].name='';
   return ledgerPhotoMeta[src];
 }
 function pinLedgerMeta(dwgId,pinId){
@@ -3767,13 +3801,8 @@ function setTool(t){
   vp.classList.toggle('placing',t==='pin'||t==='shape'||t==='measure');
   layoutPanels(); updateCollapsedGlyphs(); updateMeasureBar(); updateSelectBar(); updateSymbolPanel();
   refreshInkBtns(); redrawInk();
-  if(t==='pen')toast('ペン：1本指で描画、2本指で移動・拡大（元データは非破壊）','ok');
-  if(t==='shape')toast('図形：ドラッグで描画（既存に重ねて描けます）。移動・削除は「選択」ツールで。シフトで正方形・正円・45°に固定','ok');
-  if(t==='pin')toast('ピン：図面タップで設置、ピンを長押し／ドラッグで移動','ok');
-  if(t==='measure')toast('計測：2点をドラッグで実寸を表示。シフトで水平・垂直・45°に固定','ok');
-  if(t==='select')toast('選択：囲んで図形・ペンを複数選択。選択をドラッグで移動、消しゴムで削除','ok');
-  if(t==='text')toast('文字：図面をタップしてキーボードで入力。既存の文字はタップで編集、移動・削除は「選択」ツールで','ok');
-  if(t==='symbol')toast('シンボル：下のパレットで記号を選び図面をタップして配置。大きさ・回転はパレットで。移動・削除は「選択」ツールで','ok');
+  // ツール切替時の説明トーストは廃止（v7.82）。図面が隠れて操作の邪魔になるため。
+  // 操作できない理由の警告（editBlockReason）や、実行結果の通知は従来どおり出す。
 }
 $('#btnNav').addEventListener('click',()=>setTool('nav'));
 $('#btnPen').addEventListener('click',()=>{
@@ -4054,7 +4083,9 @@ function photoCellHtml(src, slot, no){
     </div>
     <div class="lphoto-body">
       <div class="lphoto-date">登録日：${meta.regDate}</div>
-      ${slot?`<div class="lphoto-place"><label>内容</label><input type="text" data-slotname="${slot.id}" value="${escAttr(slot.name)}" placeholder="例：外壁北面"></div>`:''}
+      <div class="lphoto-place"><label>内容</label>${slot
+        ? `<input type="text" data-slotname="${slot.id}" value="${escAttr(slot.name)}" placeholder="例：外壁北面">`
+        : `<input type="text" data-field="name" data-src="${escAttr(src)}" value="${escAttr(meta.name)}" placeholder="例：外壁北面">`}</div>
       <div class="lphoto-place">
         <label>場所</label>
         <input type="text" data-field="place" data-src="${escAttr(src)}" value="${escAttr(meta.place)}" placeholder="例：3F 会議室A 天井裏">
@@ -4223,6 +4254,11 @@ function bindLedger(){
     const meta=metaOf(inp); if(!meta) return;
     meta.place=inp.value;
   }));
+  // 内容：枠のない写真は写真メタに持つ（枠つきの写真は下の data-slotname 側で枠に書く）
+  body.querySelectorAll('input[data-field="name"]').forEach(inp=>inp.addEventListener('input',()=>{
+    const meta=metaOf(inp); if(!meta) return;
+    meta.name=inp.value;
+  }));
   // 写真下の自由記述：各行の入力
   body.querySelectorAll('.lphoto-line input').forEach(inp=>inp.addEventListener('input',()=>{
     const meta=metaOf(inp); if(!meta) return;
@@ -4385,9 +4421,10 @@ function loadJsPDF(){
 function ledgerCells(){
   const cells=[];
   (pins[ledgerDwgId]||[]).forEach((p,pi)=>{
-    const base=(meta,groupName)=>({
+    const base=(meta,groupName,slotName)=>({
       title:p.title||`ピン P${pi+1}`,
       regDate:meta.regDate, status:meta.status, place:meta.place||'',
+      name:(slotName!==undefined&&slotName!==null&&slotName!=='')?slotName:(meta.name||''),
       lines:(meta.lines||[]).filter(l=>l.trim()!==''),
       groupName:groupName||''
     });
@@ -4395,15 +4432,15 @@ function ledgerCells(){
     // 除外写真は src:null（＝未撮影の枠）として扱い、枠のない除外写真はそもそも出さない
     planArr(ledgerDwgId,p.id).forEach(sl=>{
       const use=sl.src&&!photoOff(p,sl.src);
-      its.push({src:use?sl.src:null, meta:use?photoMeta(sl.src):sl.meta, planned:true});
+      its.push({src:use?sl.src:null, meta:use?photoMeta(sl.src):sl.meta, planned:true, slotName:sl.name||''});
     });
-    unplannedPhotos(ledgerDwgId,p).filter(src=>!photoOff(p,src)).forEach(src=>its.push({src,meta:photoMeta(src),planned:false}));
+    unplannedPhotos(ledgerDwgId,p).filter(src=>!photoOff(p,src)).forEach(src=>its.push({src,meta:photoMeta(src),planned:false,slotName:''}));
     const groups=pinGroups(p);
     if(groups.length){ // 区分ごとに並べ替え（各区分→未分類）。各セルに区分名を付与
-      groups.forEach(g=>{ its.filter(it=>it.src&&photoGid(p,it.src)===g.id).forEach(it=>cells.push(Object.assign(base(it.meta,g.name),{src:it.src,planned:it.planned}))); });
-      its.filter(it=>!it.src||!photoGid(p,it.src)||!groups.find(x=>x.id===photoGid(p,it.src))).forEach(it=>cells.push(Object.assign(base(it.meta,'未分類'),{src:it.src,planned:it.planned})));
+      groups.forEach(g=>{ its.filter(it=>it.src&&photoGid(p,it.src)===g.id).forEach(it=>cells.push(Object.assign(base(it.meta,g.name,it.slotName),{src:it.src,planned:it.planned}))); });
+      its.filter(it=>!it.src||!photoGid(p,it.src)||!groups.find(x=>x.id===photoGid(p,it.src))).forEach(it=>cells.push(Object.assign(base(it.meta,'未分類',it.slotName),{src:it.src,planned:it.planned})));
     } else {
-      its.forEach(it=>cells.push(Object.assign(base(it.meta,''),{src:it.src,planned:it.planned})));
+      its.forEach(it=>cells.push(Object.assign(base(it.meta,'',it.slotName),{src:it.src,planned:it.planned})));
     }
   });
   return cells;
@@ -4570,16 +4607,20 @@ function drawCellLines(ctx,cell,x,y,w,photoH,lineH,pad){
   ctx.strokeStyle='#333';ctx.lineWidth=1.2;
   ctx.textBaseline='middle';
   let ty=y+photoH;
-  // 場所（常に1行。ラベルは灰色で区別し、未記入なら空欄のまま）
-  ctx.strokeRect(x,ty,w,lineH);
-  ctx.fillStyle='#666';ctx.font='bold 11px sans-serif';
-  const lw=ctx.measureText('場所').width;
-  ctx.fillText('場所', x+pad, ty+lineH/2);
-  if(cell.place && cell.place.trim()!==''){
-    ctx.fillStyle='#111';ctx.font='13px sans-serif';
-    ctx.fillText(cell.place, x+pad+lw+8, ty+lineH/2, w-pad*2-lw-8);
-  }
-  ty+=lineH;
+  // 内容・場所（各1行。ラベルは灰色で区別し、未記入なら空欄のまま）
+  const labeled=(label,val)=>{
+    ctx.strokeRect(x,ty,w,lineH);
+    ctx.fillStyle='#666';ctx.font='bold 11px sans-serif';
+    const lw=ctx.measureText(label).width;
+    ctx.fillText(label, x+pad, ty+lineH/2);
+    if(val && String(val).trim()!==''){
+      ctx.fillStyle='#111';ctx.font='13px sans-serif';
+      ctx.fillText(String(val), x+pad+lw+8, ty+lineH/2, w-pad*2-lw-8);
+    }
+    ty+=lineH;
+  };
+  labeled('内容', cell.name);
+  labeled('場所', cell.place);
   // 記述欄：場所より下は仕切らず、3段ぶんの高さの1マスにまとめる（長文・手書き用）。
   // 記入が無くても枠は常に出す。高さの合計は従来と同じ（場所1＋3＝4段ぶん）。
   const bigH=lineH*LPAGE.maxLines; // 3段ぶん
@@ -4597,8 +4638,10 @@ const LPAGE={ COLS:3, ROWS:2, pageW:1123, pageH:794, margin:28, gapX:14, gapY:14
 function lpageGeom(){
   const g=LPAGE;
   const cellW=(g.pageW-g.margin*2-g.gapX*(g.COLS-1))/g.COLS;
-  const photoH=cellW*0.72;
-  const cellH=photoH+g.lineH*(g.maxLines+1); // +1 は「場所」の行ぶん
+  // 「内容」行を足したぶん、写真の高さを1行ぶん削る。こうするとコマ全体の高さは従来と同じになり、
+  // 1ページ6コマ・総ページ数が変わらない（余白は元々ぎりぎりで、増やすと2段目がはみ出す）。
+  const photoH=cellW*0.72-g.lineH;
+  const cellH=photoH+g.lineH*(g.maxLines+2); // +2 は「内容」と「場所」の2行ぶん
   return {cellW,photoH,cellH,perPage:g.COLS*g.ROWS};
 }
 // 1ページ分をCanvasに描いて返す（SC＝実寸に対する解像度倍率）

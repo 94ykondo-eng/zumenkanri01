@@ -996,6 +996,59 @@
        写真ページと同じA4横寸法で図面を1ページ丸ごと描き、総ページ数と各ページの「n / m」表示もずれない
        ように +1 補正する。プレビュー・PDF出力の両方に反映。表紙の図面にはピンを含める（写真と番号で
        照合するため）。
+  build v7.86 (階数・分類をあとから変更できるように)  — これまで階数(d.floor)と分類(d.group)は図面の
+       取り込み／白紙作成のときにしか入力できず、あとから直すには図面を作り直すしかなかった
+       （上部バーの「— · その他」は「階数が未入力・分類がその他」の意味）。
+       既存の改名ダイアログを拡張し、名称・階数・分類をまとめて編集できるようにした（見出しも
+       「図面の名称を変更」→「図面の情報を変更」に）。図面リストの鉛筆ボタンから開く。
+       [階数] 内部の既定値は「—」だが、そのまま入力欄に出すと消してから打ち直す手間になるため
+       空欄として見せ、空のまま保存したら「—」に戻す（作成時ダイアログと同じ既定値）。
+       [分類] 既存の分類をプルダウンで選べるほか「＋ 新しい分類…」で新規作成もできる（白紙作成
+       ダイアログと同じ作法）。新規を選んで名前が空のまま保存しようとした場合は警告して中断する。
+       保存後は renderAll() で図面リスト・上部バーの「階数 · 分類」に即反映。台帳を開いていれば
+       その見出しも更新する。
+  build v7.87 (選択範囲の拡大縮小／グループは全体を保ったまま)  — 選択ツールは移動・グループ化・コピー・
+       削除はできたが拡大縮小ができなかった。全体枠の四隅＋各辺の中央に8つのハンドルを追加。
+       [方式] 掴んだハンドルの対角（辺なら反対側の辺）を固定点にして、選択中の全アイテムを一括で
+       相似変換する（scaleItemFrom）。グループのメンバーは expandGroups で必ず選択全体に含まれるため、
+       特別扱いをしなくても相対位置・比率が保たれる＝グループ全体が1つのまとまりとして拡縮される。
+       [比率] 既定は自由に伸び縮み。シフト（物理キー／画面のトグルどちらでも）で縦横比を固定。
+       辺の中央ハンドルはその軸だけ動く。つぶれ防止に最小1pxを確保し、固定点を通り越したら反転する。
+       [ハンドルが指に追従する] 倍率は「余白なしの外接矩形」で計算し、指の位置から SEL_PAD を差し引く。
+       余白込みの矩形で計算すると、余白自体は拡大されないぶんズレが出て、拡大するほどハンドルが指から
+       離れていく（実装時に単体テストで検出）。
+       [見た目ごと拡大] 線の太さ(width)と文字・記号の大きさ(size)も倍率Kで一緒に変える。Kは縦横倍率の
+       平均。太さは最小0.5、大きさは最小4でクランプ。
+       [アンドゥ] pointerdown 共通行の beginInkTxn / pointerup の commitInkTxn にそのまま乗るので、
+       1回の拡大縮小が1操作として元に戻せる。移動と同じ扱い。
+       [判定順] ハンドルは枠の内側とも重なるため、移動(selmove)より先に判定する。掴み判定は画面上18px
+       相当（screenTol）で、指でも掴める。ハンドルの描画半径もズーム倍率を打ち消して常に同じ見た目にした。
+       [スナップショット] 拡縮用は snapItemFull で座標に加えて width/size も控える（移動用の snapItem は
+       座標だけ。太さを毎フレーム元値から計算しないと、ドラッグ中に倍率が累積してしまうため）。
+  build v7.88 (版の考え方を刷新：「vN として確定」＋同時にドライブ保存)  —
+       [なぜ] 旧来の「投入→仮登録→管理者が公開→全端末へ一斉同期・プッシュ通知」はサーバーが無いのに
+       承認フローだけ存在する演出だった（通知も同一画面内の見せかけ）。実態と合わないうえ、旧版が
+       全画面遮断されるため「自分の作業の区切り」には使えなかった。
+       [新モデル] 1本の通し番号。末尾のちょうど1つが編集中(status:'work')、それ以前は確定済みの記録
+       (status:'fixed')。段階も承認も無い。「vN として確定」を押すと、その時点の内容が vN の記録として
+       固まり、同じ内容を引き継いだ vN+1 が新しい編集中の版になる。確定後も編集は続けられる。
+       過去の版は閲覧のみ（遮断ではなく記録。透かしも「旧版 SUPERSEDED」→「確定済み vN FIXED」に）。
+       [凍結する範囲] 朱書き等は元々 strokes[図面ID@版] なので版ごとに残る。ピンと撮影計画は図面IDだけで
+       持っており版に紐づかなかったため、確定時に ver.snap へ凍結し、確定済みの版を見ているときは
+       pinList() がそちらを返す。これで「朱書きだけ版に分かれ、ピンは分かれない」不整合を解消。
+       [写真のメモリ] スナップショットは cloneShared() で複製する。JSON.parse(JSON.stringify()) だと
+       写真のdataURLが新しい文字列として作り直され、確定のたびにメモリが写真ぶん増える。プリミティブは
+       そのまま渡して参照を共有させるため、版をいくつ作っても写真の実体は増えない。
+       [確定＝ドライブ保存] 確定と同時に saveToGas({silent:true}) を実行。silent では自前の
+       オーバーレイと通知を使うため二重表示にならず、失敗は例外で呼び出し元へ返して
+       「確定はできたがドライブ保存に失敗」と正しく伝える。
+       [押し間違い対策] 前回の確定から中身が変わっていなければボタンを無効化（verSignature/verDirty）。
+       署名は写真そのものではなく枚数で取り、巨大なdataURLを毎回文字列化しない。確認ダイアログでは
+       「この後も編集を続けられます（続きは vN+1 になります）」と明示し、メモを任意で残せる（gPrompt を
+       gConfirm の拡張として追加。キャンセルは null、OKは入力文字列を返し空メモと区別する）。
+       [移行] migrateVersions() が旧 published/draft/superseded を「末尾＝編集中、他＝確定済み」に寄せる。
+       版番号は変えない（strokes のキーが 図面ID@版 のため）。表示だけ verLabel() で '1.0'→'v1' と整える。
+       起動時と自動復元の直後の2箇所で実行する。
 -->
 <html lang="ja">
 <head>
@@ -1990,7 +2043,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="図面のPDF出力／写真台帳の1ページ目に図面を追加">build v7.85</button>
+          data-desc="版を「vN として確定」に刷新し、確定と同時にドライブ保存">build v7.88</button>
   <button class="icon-btn pinvis-btn" id="btnPinVis" title="図面上のピンを一時的に隠す／表示する">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 21s7-5.5 7-11a7 7 0 10-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>
@@ -2367,13 +2420,25 @@
 <div class="cal-scrim" id="renameScrim">
   <div class="cal-box">
     <div class="cal-head">
-      <h3>図面の名称を変更</h3>
+      <h3>図面の情報を変更</h3>
       <button class="close-x" id="renameClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <div class="cal-fields">
       <div class="cal-field">
         <label class="cal-lbl" for="renameInput">名称</label>
         <div class="cal-field-in" style="flex:1"><input type="text" id="renameInput" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off"></div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="renameFloor">階数</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><input type="text" id="renameFloor" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off" placeholder="例：3F（未入力可）"></div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="renameGroup">分類</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><select id="renameGroup" class="cal-unit" style="flex:1;height:40px"></select></div>
+      </div>
+      <div class="cal-field" id="renameGroupNewRow" style="display:none">
+        <label class="cal-lbl" for="renameGroupNew">新しい分類名</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><input type="text" id="renameGroupNew" class="cal-input" style="text-align:left;font-family:var(--sans)" autocomplete="off" placeholder="例：屋上"></div>
       </div>
     </div>
     <div class="cal-actions imp-actions">
@@ -2573,6 +2638,8 @@
     </div>
     <h3 id="gcTitle">確認</h3>
     <p class="confirm-desc" id="gcDesc"></p>
+    <input type="text" class="cal-input" id="gcInput" autocomplete="off"
+           style="display:none;text-align:left;font-family:var(--sans);width:100%;margin:2px 0 14px">
     <div class="confirm-actions">
       <button class="btn-cancel" id="gcCancel">キャンセル</button>
       <button class="btn-primary" id="gcOk">OK</button>
@@ -2937,8 +3004,42 @@ function todayStr(){
 /* ===== helpers ===== */
 const $=s=>document.querySelector(s);
 const dwg=()=>drawings.find(d=>d.id===state.selectedId);
-const publishedVer=d=>d.versions.find(v=>v.status==='published');
-const viewingVerObj=()=>{const d=dwg();if(!d)return null;return d.versions.find(v=>v.v===state.viewingVer)||publishedVer(d)||d.versions[d.versions.length-1];};
+/* ===== 版モデル（v7.88で刷新）=====
+   考え方は「1本の通し番号」。末尾のちょうど1つが編集中の版（status:'work'）で、
+   それより前は確定済みの記録（status:'fixed'）。承認や公開の段階は無い。
+   「vN として確定」を押すと、いまの作業内容が vN の記録として固まり、
+   同じ内容を引き継いだ vN+1 が新しい編集中の版になる。過去の版は閲覧のみ。 */
+const workVer=d=>{
+  if(!d||!d.versions||!d.versions.length) return null;
+  return d.versions.find(v=>v.status==='work') || d.versions[d.versions.length-1];
+};
+const publishedVer=workVer; // 旧名の呼び出し箇所との互換（意味は「いま編集中の版」）
+const viewingVerObj=()=>{const d=dwg();if(!d)return null;return d.versions.find(v=>v.v===state.viewingVer)||workVer(d);};
+const isWorkVer=v=>!!v&&v.status==='work';
+// 表示用：内部の '1.0' は「v1」と見せる（既存データのキーを壊さないため内部値は変えない）
+const verLabel=v=>'v'+String(v).replace(/\.0$/,'');
+const verNum=v=>parseFloat(v)||0;
+function nextVerNum(d){ return String(Math.floor(Math.max(0,...d.versions.map(x=>verNum(x.v))))+1); }
+/* 旧データ（published/draft/superseded）を新モデルへ寄せる。
+   末尾を編集中、それ以外を確定済みとみなす。版番号は変えない（strokes のキーが id@版 のため）。 */
+function migrateVersions(){
+  drawings.forEach(d=>{
+    if(!d.versions||!d.versions.length) return;
+    d.versions.forEach((v,i)=>{
+      if(v.status==='work'||v.status==='fixed') return;
+      v.status=(i===d.versions.length-1)?'work':'fixed';
+    });
+    if(!d.versions.some(v=>v.status==='work')) d.versions[d.versions.length-1].status='work';
+  });
+}
+/* 文字列の実体を共有したまま複製する。
+   JSON.parse(JSON.stringify()) は写真のdataURLを新しい文字列として作り直してしまい、
+   確定するたびにメモリが写真ぶん増える。プリミティブはそのまま渡して参照を共有させる。 */
+function cloneShared(o){
+  if(Array.isArray(o)) return o.map(cloneShared);
+  if(o&&typeof o==='object'){ const r={}; for(const k in o) r[k]=cloneShared(o[k]); return r; }
+  return o; // 文字列・数値・真偽値はそのまま（＝写真のdataURLは複製されない）
+}
 const inkKey=()=>{const v=viewingVerObj();return v?(state.selectedId+'@'+v.v):'__none__';};
 
 /* ===== view transform (pan/zoom) ===== */
@@ -3252,6 +3353,79 @@ function pointInSelGroup(pt){
   const m=10; return pt.x>=b.x0-m&&pt.x<=b.x1+m&&pt.y>=b.y0-m&&pt.y<=b.y1+m;
 }
 function clearMultiSel(){ selMulti=[]; selDraft=null; selMoveOrig=null; }
+
+/* ---- 選択範囲の拡大縮小 ----
+   四隅＋辺の中央の8ハンドル。掴んだハンドルの「対角（辺なら反対側の辺）」を固定点にして
+   選択中の全アイテムを一括で相似変換する。グループは同じ選択に含まれるので、
+   相対位置も比率もそのまま保たれる（＝グループ全体が1つのまとまりとして拡縮される）。 */
+const SEL_PAD=8;               // 全体枠の余白（redrawInk の描画と一致させる）
+const SEL_HANDLES=[            // [id, 横の基準, 縦の基準]（0=左/上, .5=中央, 1=右/下）
+  ['nw',0,0],['n',.5,0],['ne',1,0],['e',1,.5],['se',1,1],['s',.5,1],['sw',0,1],['w',0,.5]
+];
+function selHandlePoints(){    // 全体枠の外側に出す8点（canvas座標）
+  const g=selGroupBBox(); if(!g) return [];
+  const x0=g.x0-SEL_PAD, y0=g.y0-SEL_PAD, x1=g.x1+SEL_PAD, y1=g.y1+SEL_PAD;
+  return SEL_HANDLES.map(([id,fx,fy])=>({id, x:x0+(x1-x0)*fx, y:y0+(y1-y0)*fy, fx, fy}));
+}
+function hitSelHandle(pt){
+  const tol=screenTol(18);     // 指でも掴めるよう画面上18px相当
+  let best=null, bd=tol;
+  selHandlePoints().forEach(h=>{ const d=Math.hypot(pt.x-h.x,pt.y-h.y); if(d<bd){ bd=d; best=h; } });
+  return best;
+}
+// item の座標・寸法をまとめて (sx,sy) 倍する。ox,oy は固定点。
+function scaleItemFrom(item, orig, ox, oy, sx, sy){
+  const K=(Math.abs(sx)+Math.abs(sy))/2;   // 線幅・文字・記号に使う代表倍率
+  const mx=v=>ox+(v-ox)*sx, my=v=>oy+(v-oy)*sy;
+  if(item.type==='free'||item.type==='poly'){
+    item.pts.forEach((q,i)=>{ q.x=mx(orig.pts[i].x); q.y=my(orig.pts[i].y); });
+  } else if(item.type==='text'||item.type==='symbol'){
+    item.x=mx(orig.x); item.y=my(orig.y);
+  } else {
+    item.x1=mx(orig.x1); item.y1=my(orig.y1); item.x2=mx(orig.x2); item.y2=my(orig.y2);
+  }
+  // 見た目ごと拡大：線の太さ・文字の大きさ・記号の大きさも一緒に変える
+  if(orig.width!==undefined) item.width=Math.max(0.5, orig.width*K);
+  if(orig.size!==undefined)  item.size =Math.max(4,   orig.size *K);
+}
+// 拡大縮小のスナップショット（座標に加え、太さ・大きさも控える）
+function snapItemFull(item){
+  const o=snapItem(item);
+  if(item.width!==undefined) o.width=item.width;
+  if(item.size!==undefined)  o.size=item.size;
+  return o;
+}
+/* ドラッグ位置から倍率を求める。
+   keepRatio のときは縦横の大きいほうに合わせて比率を保つ。
+   辺のハンドルはその軸だけ動かす。つぶれ防止に最小1pxを確保。 */
+function selScaleFactors(drag, pt, keepRatio){
+  const b=drag.box, MIN=1;                             // b は余白なしの外接矩形
+  const fx=drag.h.fx, fy=drag.h.fy;
+  // ハンドルは枠から SEL_PAD だけ外側に描いてある。指の位置からその余白を戻してから
+  // 比べないと、拡大するほどハンドルが指から離れていく（余白は拡大されないため）。
+  const px=(fx===0)? pt.x+SEL_PAD : (fx===1)? pt.x-SEL_PAD : pt.x;
+  const py=(fy===0)? pt.y+SEL_PAD : (fy===1)? pt.y-SEL_PAD : pt.y;
+  let sx=1, sy=1;
+  if(fx!==.5){
+    const ox=(fx===0)?b.x1:b.x0;                       // 掴んだ側の反対＝固定点
+    const w0=Math.abs(b.x1-b.x0);
+    let w1=Math.abs(px-ox); if(w1<MIN) w1=MIN;
+    sx=(w0>0? w1/w0 : 1) * ((px-ox)*(( fx===0? b.x0:b.x1)-ox)<0 ? -1 : 1);
+  }
+  if(fy!==.5){
+    const oy=(fy===0)?b.y1:b.y0;
+    const h0=Math.abs(b.y1-b.y0);
+    let h1=Math.abs(py-oy); if(h1<MIN) h1=MIN;
+    sy=(h0>0? h1/h0 : 1) * ((py-oy)*(( fy===0? b.y0:b.y1)-oy)<0 ? -1 : 1);
+  }
+  if(keepRatio && fx!==.5 && fy!==.5){
+    const k=Math.max(Math.abs(sx),Math.abs(sy));
+    sx=k*Math.sign(sx||1); sy=k*Math.sign(sy||1);
+  }
+  const ox=(fx===.5)? b.x0 : (fx===0? b.x1 : b.x0);
+  const oy=(fy===.5)? b.y0 : (fy===0? b.y1 : b.y0);
+  return {sx,sy,ox,oy};
+}
 function moveItemBy(item, dx, dy, orig){
   if(item.type==='free'||item.type==='poly'){ item.pts.forEach((q,i)=>{ q.x=orig.pts[i].x+dx; q.y=orig.pts[i].y+dy; }); }
   else if(item.type==='text'||item.type==='symbol'){ item.x=orig.x+dx; item.y=orig.y+dy; }
@@ -3385,7 +3559,14 @@ vp.addEventListener('pointerdown',e=>{
     redoStrokes[inkKey()]=[];
   } else if(pointers.size===1 && drawable && state.tool==='select' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
-    if(selMulti.length && pointInSelGroup(pt)){
+    const hh=selMulti.length ? hitSelHandle(pt) : null;
+    if(hh){
+      // ハンドルを掴んだ → 拡大縮小。移動より先に判定する（枠の内側とも重なるため）
+      const g=selGroupBBox();
+      selMoveOrig=selMulti.map(snapItemFull);
+      dragMode={mode:'selscale', h:hh, armed:false, sx:e.clientX, sy:e.clientY,
+                box:{x0:g.x0, y0:g.y0, x1:g.x1, y1:g.y1}}; // 余白なしの外接矩形を基準にする
+    } else if(selMulti.length && pointInSelGroup(pt)){
       // 選択範囲の上を押した → まとめて移動を開始（beginInkTxnは上の共通行で実行済み）
       selMoveOrig=selMulti.map(snapItem);
       dragMode={mode:'selmove', sx:e.clientX, sy:e.clientY, startPt:pt, armed:false};
@@ -3414,6 +3595,13 @@ vp.addEventListener('pointermove',e=>{
   // ペン消しゴム：なぞっている間、触れた free 線を消す
   if(penErasing){ eraseInkAt(toCanvas(e.clientX,e.clientY)); return; }
   if(dragMode){
+    if(dragMode.mode==='selscale'){
+      if(!dragMode.armed){ if(Math.abs(e.clientX-dragMode.sx)<4 && Math.abs(e.clientY-dragMode.sy)<4) return; dragMode.armed=true; }
+      const p2=toCanvas(e.clientX,e.clientY);
+      const f=selScaleFactors(dragMode,p2,effectiveShift());
+      selMulti.forEach((it,i)=>scaleItemFrom(it,selMoveOrig[i],f.ox,f.oy,f.sx,f.sy));
+      redrawInk(); return;
+    }
     if(dragMode.mode==='selmove'){
       if(!dragMode.armed){ if(Math.abs(e.clientX-dragMode.sx)<5 && Math.abs(e.clientY-dragMode.sy)<5) return; dragMode.armed=true; }
       const p2=toCanvas(e.clientX,e.clientY);
@@ -3534,7 +3722,7 @@ function endPointer(e){
   // pin placement: single clean tap while pin tool active
   if(wasLast && downInfo && !downInfo.moved && state.tool==='pin'){
     const d0=dwg(), vv0=viewingVerObj();
-    const canPin=!!d0 && !!vv0 && vv0.status!=='superseded' && !(!state.online&&!d0.cached);
+    const canPin=!!d0 && isWorkVer(vv0) && !(!state.online&&!d0.cached);
     if(canPin && overSheet(downInfo.x,downInfo.y)) placePin(toCanvas(downInfo.x,downInfo.y));
   }
   // 文字ツール：タップで入力/編集（ドラッグは配置しない）
@@ -3796,8 +3984,17 @@ function redrawInk(){
     selMulti.forEach(it=>{ const b=itemBBox(it); ctx.strokeRect(b.x0-4,b.y0-4,(b.x1-b.x0)+8,(b.y1-b.y0)+8); });
     const g=selGroupBBox();
     if(g){ ctx.setLineDash([]); ctx.strokeStyle='rgba(59,130,246,.95)'; ctx.lineWidth=1.6;
-      ctx.strokeRect(g.x0-8,g.y0-8,(g.x1-g.x0)+16,(g.y1-g.y0)+16);
-      ctx.fillStyle='rgba(59,130,246,.08)'; ctx.fillRect(g.x0-8,g.y0-8,(g.x1-g.x0)+16,(g.y1-g.y0)+16); }
+      ctx.strokeRect(g.x0-SEL_PAD,g.y0-SEL_PAD,(g.x1-g.x0)+SEL_PAD*2,(g.y1-g.y0)+SEL_PAD*2);
+      ctx.fillStyle='rgba(59,130,246,.08)'; ctx.fillRect(g.x0-SEL_PAD,g.y0-SEL_PAD,(g.x1-g.x0)+SEL_PAD*2,(g.y1-g.y0)+SEL_PAD*2);
+      // サイズ変更ハンドル（画面上で常に同じ大きさになるよう、ズーム倍率を打ち消す）
+      const r=screenTol(6);
+      ctx.lineWidth=screenTol(1.6);
+      selHandlePoints().forEach(h=>{
+        ctx.beginPath(); ctx.rect(h.x-r,h.y-r,r*2,r*2);
+        ctx.fillStyle='#fff'; ctx.fill();
+        ctx.strokeStyle='rgba(59,130,246,.95)'; ctx.stroke();
+      });
+    }
     ctx.restore();
   }
   // 囲み選択ドラッグ中の枠（範囲/なげなわ）
@@ -5014,10 +5211,11 @@ function buildGasPayload(){
     photos
   };
 }
-async function saveToGas(){
+async function saveToGas(opts){
+  const silent=!!(opts&&opts.silent); // 確定処理から呼ぶとき：二重のオーバーレイと通知を出さない
   const url=gasUrl();
-  if(!url){ openGasSetup(); return; }
-  await withBusy('Googleドライブへ保存中…', async()=>{
+  if(!url){ if(silent) throw new Error('gas url not set'); openGasSetup(); return; }
+  const run=async()=>{
   try{
     busyProgress('データを準備中');
     await nextPaint();
@@ -5031,12 +5229,14 @@ async function saveToGas(){
     lsSet('gasLastSaved', new Date().toISOString());
     driveSavedSig=stateSig(); // 離脱ガード：この時点の状態を「Drive保存済み」とみなす
     renderGasBox();
-    toast(`Googleドライブへ保存しました（写真${payload.photos.length}枚）`,'ok');
+    if(!silent) toast(`Googleドライブへ保存しました（写真${payload.photos.length}枚）`,'ok');
   }catch(e){
     console.error(e);
+    if(silent) throw e;   // 呼び出し元（版の確定）でまとめて扱う
     toast('Googleドライブへの保存に失敗しました。設定・通信環境をご確認ください','warn');
   }
-  });
+  };
+  if(silent) await run(); else await withBusy('Googleドライブへ保存中…', run);
 }
 function resetGasSetup(){
   ['gasUrl','gasLastSaved'].forEach(lsDel);
@@ -5809,7 +6009,7 @@ function updateSelectBar(){
   const hint=$('#selHint');
   if(show && hint){
     hint.textContent = selMulti.length
-      ? `${selMulti.length}個選択中`
+      ? `${selMulti.length}個選択中：枠の四角をドラッグで拡大縮小（シフトで比率固定）`
       : (state.selMode==='rect' ? '矩形で囲んで選択（完全に囲む）' : 'なぞって囲んで選択（完全に囲む）');
   }
   const g=$('#selGroup'), u=$('#selUngroup'), c=$('#selCopy'), p=$('#selPaste');
@@ -5899,7 +6099,12 @@ $('#calFromDrag').addEventListener('click',()=>{
 });
 
 /* ===== pins: render / place / edit / photos ===== */
-function pinList(){return pins[state.selectedId]||[];}
+function pinList(){
+  // 確定済みの版を見ているときは、その時点のピンを見せる（現在のピンではなく記録）
+  const v=viewingVerObj();
+  if(v && !isWorkVer(v) && v.snap && v.snap.pins) return v.snap.pins;
+  return pins[state.selectedId]||[];
+}
 function renderPins(){
   const layer=$('#pinLayer');
   const d=dwg();
@@ -5923,7 +6128,7 @@ function editBlockReason(){
   if(!d) return '図面が選択されていません。左上の図面リストから開くか、「＋ 新規」で取り込んでください。';
   if(state.viewLock) return '閲覧ロック中です。編集するには右上のロックを解除してください。';
   if(!state.online && !d.cached) return 'オフラインのため、この図面は端末に保存されていません。ペン・図形・ピンを追加できません。';
-  if(v.status==='superseded') return '旧版のためペン・図形・ピンを追加できません。最新版をご覧ください。';
+  if(!isWorkVer(v)) return `${verLabel(v.v)} は確定済みの記録のため編集できません。最新の版に戻ると編集できます。`;
   return null;
 }
 function canPinEdit(){return editBlockReason()===null;}
@@ -6506,7 +6711,7 @@ function commitImport(){
   drawings.push({
     id,name,group,floor,cached:true,seenNew:false,imported:true,
     mmPerUnit:DEFAULT_MM_PER_UNIT, sheetSrc:pendingImport.src, sheetW:u.w, sheetH:u.h,
-    versions:[{v:'1.0',status:'published',date:todayStr().replace(/-/g,'/'),note:'取り込んだ図面を初版として登録。',diff:{tag:'REV.1.0'}}],
+    versions:[{v:'1',status:'work',date:todayStr().replace(/-/g,'/'),note:'',diff:{tag:'REV.1.0'}}],
   });
   closeImportDialog();
   state.selectedId=id; state.viewingVer=null; setTool('nav');
@@ -6595,7 +6800,7 @@ async function commitBlank(){
   drawings.push({
     id,name,group,floor,cached:true,seenNew:false,blank:true,
     mmPerUnit:DEFAULT_MM_PER_UNIT, sheetSrc:b.src, sheetW:u.w, sheetH:u.h,
-    versions:[{v:'1.0',status:'published',date:todayStr().replace(/-/g,'/'),note:'白紙（方眼）を初版として作成。',diff:{tag:'REV.1.0'}}],
+    versions:[{v:'1',status:'work',date:todayStr().replace(/-/g,'/'),note:'',diff:{tag:'REV.1.0'}}],
   });
   closeBlankDialog();
   state.selectedId=id; state.viewingVer=null; setTool('nav');
@@ -6635,11 +6840,11 @@ function renderList(){
         ${showNew?'<span class="badge-new">NEW</span>':''}
         <div class="title-row">
           <div class="title">${escHtml(d.name)}</div>
-          <button class="rename-btn" data-rename="${d.id}" title="名称を変更"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+          <button class="rename-btn" data-rename="${d.id}" title="名称・階数・分類を変更"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
           <button class="del-btn" data-del="${d.id}" title="この図面を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6"/></svg></button>
         </div>
         <div class="r2">
-          <span class="ver-tag pub">v${pub?pub.v:'—'} 最新</span>
+          <span class="ver-tag pub">${pub?verLabel(pub.v):'—'} 編集中</span>
           ${d.blank?'<span class="imported-chip">白紙</span>':d.imported?'<span class="imported-chip">取り込み</span>':''}
           ${d.cached?`<span class="chip cache-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>保存済</span>`
             :`<span class="chip">${locked?'未保存':'クラウド'}</span>`}
@@ -6702,10 +6907,20 @@ async function deleteDrawing(id){
   renderAll(); fitView();
 }
 let renameTargetId=null;
+const NO_FLOOR='—'; // 階数が未入力のときの表示（作成時のダイアログと同じ既定値）
 function openRenameDialog(id){
   const d=drawings.find(x=>x.id===id); if(!d) return;
   renameTargetId=id;
   $('#renameInput').value=d.name;
+  // 階数：内部の既定値「—」はそのまま出すと消しにくいので、空欄として見せる
+  $('#renameFloor').value=(d.floor&&d.floor!==NO_FLOOR)?d.floor:'';
+  // 分類：既存の分類＋この図面の分類を候補に。新規追加もできる
+  const groups=[...new Set(drawings.map(x=>x.group).concat(d.group?[d.group]:[]))].filter(Boolean);
+  $('#renameGroup').innerHTML=groups.map(g=>`<option value="${escAttr(g)}">${escHtml(g)}</option>`).join('')
+    +'<option value="__new">＋ 新しい分類…</option>';
+  $('#renameGroup').value=d.group||groups[0]||'その他';
+  $('#renameGroupNewRow').style.display='none';
+  $('#renameGroupNew').value='';
   $('#renameScrim').classList.add('show');
   setTimeout(()=>{ $('#renameInput').focus(); $('#renameInput').select(); },50);
 }
@@ -6714,16 +6929,29 @@ function commitRename(){
   const d=drawings.find(x=>x.id===renameTargetId); if(!d) return;
   const v=($('#renameInput').value||'').trim();
   if(!v){ toast('名称を入力してください','warn'); return; }
+  let group=$('#renameGroup').value;
+  if(group==='__new'){
+    group=($('#renameGroupNew').value||'').trim();
+    if(!group){ toast('新しい分類名を入力してください','warn'); return; }
+  }
   d.name=v;
+  d.floor=($('#renameFloor').value||'').trim()||NO_FLOOR; // 空欄なら「—」に戻す
+  d.group=group;
   closeRenameDialog();
-  renderAll(); // リスト・図面タイトル・右パネルの表示すべてに反映
+  renderAll(); // リスト・図面タイトル・上部バーの「階数 · 分類」すべてに反映
   if($('#ledger').classList.contains('show') && ledgerDwgId===d.id) renderLedger(); // 台帳の見出しも更新
-  toast('名称を変更しました','ok');
+  toast('図面の情報を変更しました','ok');
 }
 $('#renameClose').addEventListener('click',closeRenameDialog);
 $('#renameCancel').addEventListener('click',closeRenameDialog);
 $('#renameSave').addEventListener('click',commitRename);
+$('#renameGroup').addEventListener('change',()=>{
+  const isNew=$('#renameGroup').value==='__new';
+  $('#renameGroupNewRow').style.display=isNew?'':'none';
+  if(isNew) setTimeout(()=>$('#renameGroupNew').focus(),50);
+});
 $('#renameInput').addEventListener('keydown',e=>{ if(e.key==='Enter') commitRename(); });
+$('#renameFloor').addEventListener('keydown',e=>{ if(e.key==='Enter') commitRename(); });
 $('#renameScrim').addEventListener('click',e=>{ if(e.target.id==='renameScrim') closeRenameDialog(); });
 function renderViewer(){
   const d=dwg();
@@ -6749,16 +6977,15 @@ function renderViewer(){
   applySheetSize(d); // 取り込み図面は固有の座標系（inkLayer のサイズもこれに追従）
   $('#vhTitle').textContent=d.name;
   $('#vhMeta').textContent=`${d.floor} · ${d.group}`;
-  let pill=v.status==='published'?`<span class="status-pill pub"><span class="d"></span>最新 v${v.v}</span>`
-    :v.status==='draft'?`<span class="status-pill draft"><span class="d"></span>ドラフト v${v.v}</span>`
-    :`<span class="status-pill old"><span class="d"></span>旧版 v${v.v}</span>`;
+  let pill=isWorkVer(v)?`<span class="status-pill pub"><span class="d"></span>編集中 ${verLabel(v.v)}</span>`
+    :`<span class="status-pill old"><span class="d"></span>確定済み ${verLabel(v.v)}</span>`;
   $('#statusPill').innerHTML=pill;
   $('#sheetHost').innerHTML = d.sheetSrc
     ? `<img id="sheet" src="${d.sheetSrc}" width="${CW}" height="${CH}" alt="${d.name}" draggable="false">`
     : sheetSVG(v.diff);
   redrawInk();
   const wm=$('#watermark');
-  if(v.status==='superseded'){wm.classList.add('show');let r='';for(let i=0;i<7;i++)r+=`<div class="row">旧版 <small>SUPERSEDED</small> 旧版 <small>SUPERSEDED</small></div>`;$('#wmRows').innerHTML=r;}
+  if(!isWorkVer(v)){wm.classList.add('show');let r='';for(let i=0;i<7;i++)r+=`<div class="row">確定済み <small>${escHtml(verLabel(v.v))} FIXED</small> 確定済み <small>${escHtml(verLabel(v.v))} FIXED</small></div>`;$('#wmRows').innerHTML=r;}
   else wm.classList.remove('show');
   $('#blocker').classList.toggle('show',locked);
   const canEdit=canPinEdit();
@@ -6775,26 +7002,23 @@ function renderViewer(){
 function renderContext(){
   const d=dwg();
   if(d){
-    let vh='<div class="section-lbl">改訂履歴</div>';
+    let vh='<div class="section-lbl">版の記録</div>';
+    const viewing=viewingVerObj();
     [...d.versions].reverse().forEach(v=>{
-      const cls=v.status==='published'?'pub':v.status==='draft'?'draft':'old';
-      const lbl=v.status==='published'?'最新版':v.status==='draft'?'ドラフト':'旧版';
-      vh+=`<div class="ver-item ${v.v===viewingVerObj().v?'viewing':''}" data-ver="${v.v}">
-        <div class="top"><span class="vnum">v${v.v}</span><span class="mini-pill ${cls}">${lbl}</span></div>
-        <div class="vdate">${v.date}</div><div class="vnote">${v.note}</div></div>`;
+      const work=isWorkVer(v);
+      vh+=`<div class="ver-item ${v.v===viewing.v?'viewing':''}" data-ver="${v.v}">
+        <div class="top"><span class="vnum">${verLabel(v.v)}</span><span class="mini-pill ${work?'pub':'old'}">${work?'編集中':'確定済み'}</span></div>
+        <div class="vdate">${escHtml(v.date||'')}</div><div class="vnote">${escHtml(v.note||(work?'この版を編集しています。区切りがついたら確定してください。':''))}</div></div>`;
     });
-    // 管理役割を廃止（v7.8）。仮登録・公開はどちらも作図役割から行う。
-    const draft=d.versions.find(v=>v.status==='draft');
-    // 版管理（投入→仮登録→公開）は役割統合により常時利用可能（v7.64）
-    vh=`<div class="approve-box neutral"><h4>図面の投入・版管理</h4>
-        <p>変換元（Visio / CAD / Excel）を投入すると、クラウドで自動的にベクターPDFへ変換し「仮登録（ドラフト）」します。</p>
-        <button class="btn-outline" id="btnUpload">＋ 図面を投入して仮登録</button></div>`+vh;
-    if(draft){
-      vh=`<div class="approve-box"><h4>⚑ 公開待ち</h4>
-        <p><b>v${draft.v}</b> を仮登録中です。内容を確認し、問題なければ公開してください。公開すると全現場端末へ一斉同期・プッシュ通知されます。</p>
-        <button class="btn-primary" id="btnPublish"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>最新版として公開</button>
+    const wv=workVer(d);
+    vh=`<div class="approve-box neutral"><h4>この図面の版</h4>
+        <p>いまは <b>${verLabel(wv.v)}</b> を編集中です。区切りがついたら確定すると、その時点の朱書き・ピン・写真が記録として残り、
+        続きは <b>${verLabel(nextVerNum(d))}</b> になります。確定後も編集は続けられます。</p>
+        <button class="btn-primary" id="btnFixVer" ${verDirty(d)?'':'disabled'}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+          ${verLabel(wv.v)} として確定</button>
+        <p class="p-note" style="margin-top:8px">${verDirty(d)?'確定と同時にGoogleドライブへ保存します。':'前回の確定から変更がありません。'}</p>
         </div>`+vh;
-    }
     $('#paneVer').innerHTML=vh;
   }else{
     $('#paneVer').innerHTML='<div class="ctx-empty">図面を選択すると、ここにバージョン履歴が表示されます。左上の図面リストから開くか、「＋ 新規」で取り込んでください。</div>';
@@ -6843,8 +7067,7 @@ function bindContext(){
     const p=pinList().find(x=>x.id===el.dataset.pin);if(!p)return;
     closeDrawers();focusPin(p);openPin(p.id);
   }));
-  const bp=$('#btnPublish');if(bp)bp.addEventListener('click',publishDraft);
-  const bu=$('#btnUpload');if(bu)bu.addEventListener('click',uploadDraft);
+  const bf=$('#btnFixVer');if(bf)bf.addEventListener('click',fixVersion);
   document.querySelectorAll('[data-cache]').forEach(sw=>sw.addEventListener('click',()=>{
     const d2=drawings.find(x=>x.id===sw.dataset.cache);d2.cached=!d2.cached;
     toast(d2.cached?`「${d2.name}」を端末に保存しました`:`「${d2.name}」の保存を解除しました`,d2.cached?'ok':'warn');
@@ -6852,39 +7075,63 @@ function bindContext(){
   }));
 }
 
+/* ===== 版の確定 ===== */
+// 前回の確定から中身が変わったか（変わっていなければ確定ボタンを無効化する）
+function verSignature(d){
+  const wv=workVer(d); if(!wv) return '';
+  const ink=strokes[d.id+'@'+wv.v]||[];
+  const ps=pins[d.id]||[];
+  // 写真は枚数だけ見る（巨大なdataURLを毎回文字列化しない）
+  const pinSig=ps.map(p=>`${p.id}:${p.x},${p.y},${p.color},${p.icon},${p.angle||0},${p.pinScale||1},${p.title||''},${p.note||''},${p.photos.length}`).join('|');
+  const planSig=JSON.stringify((ledgerPlan[d.id]||{}));
+  return `${ink.length}#${JSON.stringify(ink).length}#${pinSig}#${planSig.length}`;
+}
+function verDirty(d){
+  const wv=workVer(d); if(!wv) return false;
+  if(wv.baseSig===undefined) return true;      // まだ一度も確定していない
+  return verSignature(d)!==wv.baseSig;
+}
+async function fixVersion(){
+  const d=dwg(); if(!d){ toast('先に図面を開いてください','warn'); return; }
+  const wv=workVer(d); if(!wv) return;
+  if(!verDirty(d)){ toast('前回の確定から変更がありません','warn'); return; }
+  const nv=nextVerNum(d);
+  const note=await gPrompt({
+    title:`${verLabel(wv.v)} として確定しますか？`,
+    desc:`この時点の朱書き・ピン・写真を ${verLabel(wv.v)} の記録として残します。<br>`
+        +`この後も編集を続けられます（続きは ${verLabel(nv)} になります）。<br>確定と同時にGoogleドライブへ保存します。`,
+    placeholder:'メモ（任意）：例）室内機まわり確定',
+    ok:'確定して保存'
+  });
+  if(note===null) return; // キャンセル
+  await withBusy(`${verLabel(wv.v)} を確定中…`, async()=>{
+    busyProgress('この時点の内容を記録中'); await nextPaint();
+    // ① いまの版を記録として固める（ピン・撮影計画はこの版に凍結。朱書きは strokes[id@版] にそのまま残る）
+    wv.status='fixed';
+    wv.date=todayStr().replace(/-/g,'/');
+    wv.note=(note||'').trim()||'（メモなし）';
+    wv.snap={ pins:cloneShared(pins[d.id]||[]), plan:cloneShared(ledgerPlan[d.id]||{}) };
+    // ② 中身を引き継いだ次の版を作り、そこを編集中にする
+    const next={v:nv, status:'work', date:todayStr().replace(/-/g,'/'), note:'', diff:wv.diff};
+    d.versions.push(next);
+    strokes[d.id+'@'+nv]=cloneShared(strokes[d.id+'@'+wv.v]||[]);
+    redoStrokes[d.id+'@'+nv]=[];
+    next.baseSig=verSignature(d);   // この時点＝確定直後を基準にする
+    state.viewingVer=null;          // 常に編集中の版へ戻す
+    clearMultiSel(); deselectShape();
+    renderAll();
+    // ③ 確定と同時にGoogleドライブへ保存
+    busySetLabel('Googleドライブへ保存中…'); busyProgress(''); await nextPaint();
+    try{ await saveToGas({silent:true}); }
+    catch(e){ toast('確定しました。ただしGoogleドライブへの保存に失敗しました（設定・通信環境をご確認ください）','warn'); return; }
+    toast(`${verLabel(wv.v)} として確定し、Googleドライブへ保存しました`,'ok');
+  });
+}
+
 /* ===== workflow ===== */
-function uploadDraft(){
-  const d=dwg();
-  if(!d){ toast('先に図面を開いてください','warn'); return; }
-  if(d.versions.some(v=>v.status==='draft')){toast('既に承認待ちのドラフトがあります','warn');return;}
-  const pub=publishedVer(d)||d.versions[d.versions.length-1];
-  const nextV=(parseFloat(pub.v)+1).toFixed(1);
-  toast('クラウドでベクターPDFへ変換中…','ok');
-  setTimeout(()=>{
-    d.versions.push({v:nextV,status:'draft',date:'2026/07/12',note:'（自動変換）CAD原図から生成。内容確認待ち。',
-      diff:{tag:'REV.'+nextV,
-      extra:`<line x1="662" y1="185" x2="810" y2="185" stroke="#16324A" stroke-width="3"/><text x="736" y="130" font-family="IBM Plex Sans JP,sans-serif" font-size="12" fill="#16324A" text-anchor="middle">応接室（新設）</text>`,
-      hl:[662,68,148,117]}});
-    state.viewingVer=nextV;toast(`v${nextV} を仮登録しました（公開待ち）`,'ok');renderAll();fitView();
-  },1100);
-}
-async function publishDraft(){
-  const d=dwg();const draft=d.versions.find(v=>v.status==='draft');if(!draft)return;
-  const ok=await gConfirm({title:'このバージョンを公開しますか？',desc:`v${draft.v} を最新版として公開します。<br>現在の最新版は旧版になり、全員の表示が新しい版に切り替わります。`,ok:'公開する',danger:false});
-  if(!ok) return;
-  d.versions.forEach(v=>{if(v.status==='published')v.status='superseded';});
-  draft.status='published';draft.date='2026/07/12';state.viewingVer=draft.v;d.seenNew=true;
-  toast(`v${draft.v} を最新版として公開しました`,'ok');pushNotify(d,draft.v);renderAll();
-}
-function pushNotify(d,v){
-  const el=document.createElement('div');el.className='push';
-  el.innerHTML=`<div class="h"><div class="app-ic">図</div><span class="app-nm">図面共有システム</span><span class="now">今</span></div>
-    <div class="ttl">最新図面が公開されました</div>
-    <div class="bd">${d.name} <b>v${v}</b> が公開。旧版の使用は自動で遮断されます。タップで開く。</div>`;
-  $('#pushStack').appendChild(el);requestAnimationFrame(()=>el.classList.add('show'));
-  el.addEventListener('click',()=>{setRole('field');state.selectedId=d.id;state.viewingVer=null;d.seenNew=false;renderAll();fitView();dismiss(el);});
-  setTimeout(()=>dismiss(el),6500);
-}
+// 旧デモ動線（uploadDraft / publishDraft / pushNotify）は v7.88 で撤去。
+// サーバーが無いのに「仮登録→承認→全端末へ配信」を演出しており、実態と合わなかった。
+// 版は「vN として確定」の1本に統一（fixVersion）。
 function dismiss(el){el.classList.remove('show');setTimeout(()=>el.remove(),400);}
 
 /* ===== role / net ===== */
@@ -6930,20 +7177,28 @@ function toast(msg,kind){
    =================================================================== */
 
 /* ---- C. 汎用確認ダイアログ（Promiseを返す） ---- */
-function gConfirm({title,desc,ok,danger}){
+function gConfirm({title,desc,ok,danger,placeholder}){
   return new Promise(res=>{
     $('#gcTitle').textContent=title||'確認';
     $('#gcDesc').innerHTML=desc||'';
+    const inp=$('#gcInput'), wantInput=(placeholder!==undefined);
+    inp.style.display=wantInput?'':'none';
+    if(wantInput){ inp.value=''; inp.placeholder=placeholder||''; }
     const okBtn=$('#gcOk'); okBtn.textContent=ok||'OK';
     okBtn.className = danger?'btn-danger':'btn-primary';
     const scrim=$('#gConfirmScrim');
-    const close=v=>{ scrim.classList.remove('show'); okBtn.onclick=null; $('#gcCancel').onclick=null; scrim.onclick=null; res(v); };
-    okBtn.onclick=()=>close(true);
-    $('#gcCancel').onclick=()=>close(false);
-    scrim.onclick=e=>{ if(e.target.id==='gConfirmScrim') close(false); };
+    const close=v=>{ scrim.classList.remove('show'); okBtn.onclick=null; $('#gcCancel').onclick=null; scrim.onclick=null; inp.onkeydown=null; inp.style.display='none'; res(v); };
+    // メモ入力つきのときは、キャンセルを null・OKを入力文字列で返す（空文字と区別するため）
+    okBtn.onclick=()=>close(wantInput?(inp.value||''):true);
+    $('#gcCancel').onclick=()=>close(wantInput?null:false);
+    scrim.onclick=e=>{ if(e.target.id==='gConfirmScrim') close(wantInput?null:false); };
+    if(wantInput) inp.onkeydown=e=>{ if(e.key==='Enter') close(inp.value||''); };
     scrim.classList.add('show');
+    if(wantInput) setTimeout(()=>inp.focus(),60);
   });
 }
+// メモを受け取る確認ダイアログ。キャンセルは null、OKは入力文字列（空可）を返す。
+function gPrompt(opts){ return gConfirm(Object.assign({placeholder:''},opts)); }
 
 /* ---- D. 閲覧ロック（見るだけモード）：全編集ジェスチャーを無効化 ---- */
 /* ===== 文字入力ツール ===== */
@@ -7288,7 +7543,9 @@ function renderAll(){renderList();renderViewer();renderContext();updateTabs();}
 window.addEventListener('resize',fitView);
 renderAll();fitView();layoutPanels();updateCollapsedGlyphs();
 // 復元は速ければ何も出さない（400ms超えたときだけスピナー）
+migrateVersions();
 withBusy('前回の作業を復元中…', ()=>restoreFromAutosave(), '', {delay:400}).then(ok=>{
+  migrateVersions(); // 復元した旧データ（published/draft/superseded）も新モデルへ寄せる
   if(ok){ renderAll(); fitView(); layoutPanels(); updateCollapsedGlyphs(); toast('前回の作業を復元しました','ok'); }
   lastSavedSig=stateSig(); driveSavedSig=stateSig(); // 復元直後は「未変更」から開始
 });

@@ -1049,6 +1049,25 @@
        [移行] migrateVersions() が旧 published/draft/superseded を「末尾＝編集中、他＝確定済み」に寄せる。
        版番号は変えない（strokes のキーが 図面ID@版 のため）。表示だけ verLabel() で '1.0'→'v1' と整える。
        起動時と自動復元の直後の2箇所で実行する。
+  build v7.89 (修正：iPadで「前回の作業を復元中…」が頻発する)  —
+       [診断] 復元は起動時にしか走らない。頻発する＝ページ自体が頻繁に再読込されている。iOS Safariは
+       メモリ不足になるとバックグラウンドのタブを黙って破棄し、戻ったときに再読込する（jetsam）。
+       本アプリは写真を無圧縮のdataURL（iPhone写真1枚≒base64で5MB）でメモリに持つため、数十枚で
+       数百MBに達し、アプリ切替のたびに破棄→再読込→復元表示、を繰り返していた。v7.80の台帳白抜けと
+       同じ根（メモリ枯渇）の別症状。
+       [対策1] 取り込み時に縮小：fileToDataUrl が読み込み後に長辺1600px・JPEG品質0.82へ縮小して返す
+       （downscalePhotoDataUrl）。台帳PDFの貼り込みは長辺760pxなので画質は十分。約300KB未満の
+       dataURLは対象外（サンプル写真等）。縮小して逆に大きくなった場合は元のまま。
+       [対策2] 既存写真の一括圧縮：起動時（復元・版移行の後）に compressAllPhotos() が一度だけ走り、
+       無圧縮のまま保存されている写真を同条件で縮小する。dataURLは写真のIDとして全域のキーに
+       使われているため、remapPhotoSrc() が pins（photos/photoGroup/photoOff）・ledgerPlan・
+       版スナップショット（v.snap.pins/plan）・ledgerPhotoMeta・photoInk の参照を張り替え、
+       compositeCache/cellImgCache の旧キーを破棄する。写真の注釈は長辺1000正規化の座標なので
+       縮小の影響を受けない。進捗は「写真を軽量化中… n/m枚」、全部縮小済みなら何も表示しない
+       （delay:300）。完了時に「写真n枚を軽量化しました」を通知。
+       [効果] 写真1枚あたりのメモリが5MB前後→数百KBに（1/5〜1/10）。タブ破棄の閾値に届きにくくなり、
+       台帳PDF生成の失敗リスクも下がる。IndexedDBの旧 img: エントリは残るが実害はない（次回の
+       ドライブ保存では新ハッシュ名で1回だけ再アップロードされる）。
 -->
 <html lang="ja">
 <head>
@@ -2043,7 +2062,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="版を「vN として確定」に刷新し、確定と同時にドライブ保存">build v7.88</button>
+          data-desc="修正：写真を長辺1600pxへ軽量化（iOSのタブ破棄→頻繁な復元を解消）">build v7.89</button>
   <button class="icon-btn pinvis-btn" id="btnPinVis" title="図面上のピンを一時的に隠す／表示する">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 21s7-5.5 7-11a7 7 0 10-14 0c0 5.5 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>
@@ -6575,8 +6594,31 @@ function loadPdfJs(){
   });
   return pdfjsLoading;
 }
-function fileToDataUrl(f){
-  return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error('read failed'));r.readAsDataURL(f);});
+/* 写真は必ず縮小して保持する。
+   iPhone写真は1枚12MP＝base64で5MB前後あり、無圧縮で数十枚持つとタブのメモリが数百MBに達して
+   iOSがアプリ切替時にタブごと破棄する（→戻るたびに再読込・「前回の作業を復元中…」が出る）。
+   台帳PDFの貼り込みは長辺760pxなので、長辺1600pxあれば拡大表示にも十分。 */
+const PHOTO_MAX_EDGE=1600, PHOTO_JPEG_Q=0.82;
+const PHOTO_COMPRESS_MIN_LEN=400000;   // これ未満のdataURL(約300KB)は縮小しない（サンプル写真など）
+async function downscalePhotoDataUrl(src){
+  if(typeof src!=='string' || !src.startsWith('data:image/') || src.length<PHOTO_COMPRESS_MIN_LEN) return src;
+  try{
+    const img=await loadDecoded(src);
+    const nw=img.naturalWidth||img.width, nh=img.naturalHeight||img.height;
+    if(!nw||!nh){ releaseImg(img); return src; }
+    if(Math.max(nw,nh)<=PHOTO_MAX_EDGE*1.15){ releaseImg(img); return src; } // 既に小さい
+    const k=PHOTO_MAX_EDGE/Math.max(nw,nh);
+    const cw=Math.round(nw*k), ch=Math.round(nh*k);
+    const cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+    cv.getContext('2d').drawImage(img,0,0,cw,ch);
+    releaseImg(img);
+    const out=cv.toDataURL('image/jpeg',PHOTO_JPEG_Q);
+    return out.length<src.length ? out : src;  // 万一大きくなったら元のまま
+  }catch(_){ return src; }
+}
+async function fileToDataUrl(f){
+  const raw=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error('read failed'));r.readAsDataURL(f);});
+  return downscalePhotoDataUrl(raw);
 }
 function imgSize(src){
   return new Promise((res,rej)=>{const im=new Image();im.onload=()=>res({w:im.naturalWidth||im.width,h:im.naturalHeight||im.height});im.onerror=()=>rej(new Error('decode failed'));im.src=src;});
@@ -7515,6 +7557,45 @@ window.addEventListener('unhandledrejection', ()=>onGlobalError());
 window.addEventListener('beforeunload',e=>{
   if(isDriveDirty() && gasUrl()){ e.preventDefault(); e.returnValue=''; return ''; }
 });
+/* ===== 既存写真の一括圧縮（v7.89）=====
+   すでに無圧縮で保存されている写真を長辺1600pxへ縮小する。dataURLそのものが写真のIDとして
+   あらゆる場所（メタ・区分・除外・撮影計画・注釈・版のスナップショット）のキーに使われているため、
+   圧縮で文字列が変わったら全参照を張り替える。注釈は長辺1000正規化の座標なので縮小の影響を受けない。 */
+function remapPhotoSrc(o,n){
+  if(o===n) return;
+  const fixPins=(arr)=>{ (arr||[]).forEach(p=>{
+    (p.photos||[]).forEach((x,i)=>{ if(x===o) p.photos[i]=n; });
+    if(p.photoGroup&&p.photoGroup[o]!==undefined){ p.photoGroup[n]=p.photoGroup[o]; delete p.photoGroup[o]; }
+    if(p.photoOff&&p.photoOff[o]!==undefined){ p.photoOff[n]=p.photoOff[o]; delete p.photoOff[o]; }
+  }); };
+  const fixPlan=(plan)=>{ Object.values(plan||{}).forEach(arr=>(arr||[]).forEach(sl=>{ if(sl.src===o) sl.src=n; })); };
+  Object.values(pins).forEach(fixPins);
+  Object.values(ledgerPlan).forEach(fixPlan);
+  drawings.forEach(d=>(d.versions||[]).forEach(v=>{ if(v.snap){ fixPins(v.snap.pins); fixPlan(v.snap.plan); } }));
+  if(ledgerPhotoMeta[o]!==undefined){ ledgerPhotoMeta[n]=ledgerPhotoMeta[o]; delete ledgerPhotoMeta[o]; }
+  if(photoInk[o]!==undefined){ photoInk[n]=photoInk[o]; delete photoInk[o]; }
+  delete compositeCache[o]; delete compositeSig[o]; delete cellImgCache[o];
+}
+async function compressAllPhotos(){
+  // 対象を数える（ピン直下と版スナップショットの写真をユニークに集める）
+  const all=new Set();
+  const collect=(arr)=>(arr||[]).forEach(p=>(p.photos||[]).forEach(x=>{ if(typeof x==='string'&&x.length>=PHOTO_COMPRESS_MIN_LEN) all.add(x); }));
+  Object.values(pins).forEach(collect);
+  drawings.forEach(d=>(d.versions||[]).forEach(v=>{ if(v.snap) collect(v.snap.pins); }));
+  if(!all.size) return 0;
+  let done=0, shrunk=0;
+  await withBusy('写真を軽量化中…', async()=>{
+    for(const src of all){
+      busyProgress(`${++done}/${all.size}枚`);
+      const out=await downscalePhotoDataUrl(src);
+      if(out!==src){ remapPhotoSrc(src,out); shrunk++; }
+      await new Promise(r=>setTimeout(r,0)); // 1枚ごとに制御を返してSafariに解放の隙を与える
+    }
+  }, `0/${all.size}枚`, {delay:300}); // 全部縮小済みなら一瞬で終わり、何も表示されない
+  if(shrunk){ renderAll(); toast(`写真${shrunk}枚を軽量化しました（動作が安定します）`,'ok'); }
+  return shrunk;
+}
+
 // バックグラウンド化・離脱の瞬間に確実に自動保存（iOSは pagehide / visibilitychange が信頼できる）
 window.addEventListener('pagehide',()=>{ autosaveNow(true); });
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='hidden') autosaveNow(true); });
@@ -7546,6 +7627,7 @@ renderAll();fitView();layoutPanels();updateCollapsedGlyphs();
 migrateVersions();
 withBusy('前回の作業を復元中…', ()=>restoreFromAutosave(), '', {delay:400}).then(ok=>{
   migrateVersions(); // 復元した旧データ（published/draft/superseded）も新モデルへ寄せる
+  compressAllPhotos(); // 無圧縮のまま保存されている写真を一度だけ縮小（iOSのタブ破棄対策）
   if(ok){ renderAll(); fitView(); layoutPanels(); updateCollapsedGlyphs(); toast('前回の作業を復元しました','ok'); }
   lastSavedSig=stateSig(); driveSavedSig=stateSig(); // 復元直後は「未変更」から開始
 });

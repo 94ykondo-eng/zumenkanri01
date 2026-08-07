@@ -1128,12 +1128,99 @@
        [Code.gs] 新規に作成（別ファイルで提供）。doPost は写真をファイル単位で置き換え、送られて
        こなかったファイルは削除しない＝v7.91の差分送信と整合する。doGet は mode=restore（JSON＋
        ファイル名一覧）と mode=photo（1枚をdataURLで返す）に対応。
+  build v7.94 (写真台帳のExcel出力)  —
+       [方針] 一覧表形式（1行1写真）。列は No./ピン/区分/内容/施工状況/場所/登録日/記述/写真。
+       PDFが「そのまま提出する紙」なのに対し、Excelは「提出後に並べ替え・絞り込み・追記する台帳」
+       として作る。見出し行にオートフィルタと固定枠を入れてあるのはそのため。
+       [なぜ自前でXMLを書くか] 写真をセルに入れられる無償のJSライブラリが存在しない
+       （SheetJSの無償版は画像非対応）。xlsx はOOXMLのXMLをzipに固めただけなので、
+       XMLは自前で組み立て、zip化だけJSZip(CDN)に任せる。PDFと同じくオンライン時のみ。
+       [写真の貼り方] 写真はセルの値ではなく xl/drawings/drawing1.xml の oneCellAnchor で
+       「何列目・何行目に幅cx・高さcyで貼る」と別に書く。したがって行高(pt=px×0.75)と列幅を
+       表示サイズに合わせて明示しないと、写真が下の行へはみ出す。
+       [重複の除去] 同じ写真が複数の区分に現れることがあるため media は src でまとめ、
+       anchor だけ増やす。まとめないとファイルが枚数ぶん膨らむ。
+       [画質] PDFの貼り込みと同じ cellImage() の縮小キャッシュ（長辺760px）を使い回し、
+       表示は240×180pxに収める。1枚読めなくても skipped に数えて全体は出力する。
+  build v7.95 (ピンの写真画面で区分を上下に並べ替え)  —
+       [目的] 区分の並び順は p.groups の配列順で、ledgerCells() がそのまま出力順に使う。
+       つまり並べ替え＝写真台帳・PDF・Excel の並びを変えること。これまで並べ替える手段が
+       無く、順番を直すには区分を作り直して写真を入れ直すしかなかった。
+       [UI] 各区分の見出しに ∧ ∨ ボタン。先頭・末尾では disabled にし、display:none では
+       なく薄く表示のまま当たり判定だけ切る（ボタンの位置が動くと押し間違えるため）。
+       区分が1つだけのときは出さない。「未分類」は常に最後で並べ替え対象外。
+       [実装] moveGroupInList(arr,gid,dir) を純粋関数として切り出し（出力順に直結するので
+       単体試験する）。再描画すると押したボタン自体が動くので、移動先を scrollIntoView で
+       画面内に引き戻す。トーストは出さない（v7.82でヒントトーストを全廃した方針に合わせる）。
+  build v7.96 (写真の書き込み画面で写真を左右90°回転)  —
+       [方針] 見た目だけ回すのではなく、写真そのものを作り直して差し替える。src が全域の
+       キーなので remapPhotoSrc() を通せば、サムネイル・拡大表示・写真台帳・PDF・Excel が
+       一度に正しい向きになる。横向きに撮れてしまった写真を直す、という用途に合わせた。
+       [一緒に回さないとズレる3つ] ①注釈(photoInk)の座標＝長辺1000正規化の論理座標を
+       rotateInkPoint で回す（回しても長辺は1000のままなので拡縮は不要）。②IndexedDBの
+       原寸＝回さないと拡大表示に切り替えた瞬間だけ横向きに戻る。③pannoViewの倍率・位置＝
+       縦横が入れ替わるので初期化する。
+       [文字だけ寝かせない] text は外接矩形の中心だけ回して位置を合わせ、文字自体は正立の
+       まま（寝かせると読めない）。記号(symbol)は rot も ±90° して写真と一緒に向きを変える。
+       [副作用として承知しておくこと] ①JPEGを再エンコードするため回すたびにわずかに劣化する
+       （90°回転は本来ロスレスだが canvas 経由では避けられない）。②旧srcの原寸がIndexedDBに
+       孤児として残る（元々の「原本が青天井」課題と同じ）。③確定済みバージョンの snap も
+       remapPhotoSrc の対象なので、過去の記録の写真も向きが直る（compressAllPhotos と同じ挙動）。
+       [UI] ドックではなく上部バーに置いた。回転は描画ツールではなく写真そのものへの操作のため。
+  build v7.97 (ピンのログを収納できるように＋記録と表示を詳しく)  —
+       [収納] 「ログ」の見出しを開閉ボタンにした。既定は畳んだ状態で、開閉の選択は端末に覚えさせる
+       （localStorage: zk_pinlog_open）。見出しに件数バッジ。畳んでいる間は中身のHTMLを作らないので、
+       記録が多いピンでもピンシートを開く動作が重くならない。押しても見出し自体の位置は動かない
+       （下の中身だけ伸縮する）ので、iOSでclickが飛ばない既往を踏まない。
+       [記録を増やす] これまでは撮影・更新・削除の3種だけだった。ここに 回転／区分の追加・改名・
+       削除・並べ替え／写真の区分変更／台帳掲載のON/OFF／備考の編集 を追加。ログの項目に detail
+       （「調査 → 工事前」など何から何へ）を持たせた。既存の記録は detail が無いだけで従来どおり出る。
+       備考は input ではなく change（欄を離れたとき）で記録する。input で拾うと1文字ごとに1行増える。
+       [表示を詳しく] 新しい順のまま「今日／昨日／8月5日(水)」の日付見出しでまとめ、時刻は秒まで出す。
+       詳細は2行目に小さく添える。最初は32件だけ出し、残りは「さらに表示」で開く。
+       [ログに写真を入れない] ログは端末保存とドライブ保存の両方に載るため、サムネイル（dataURL）は
+       持たせない。持たせるとバックアップJSONが写真ぶん膨らみ、v7.93 で塞いだ穴を開け直すことになる。
+       [上限] 1ピンあたり200件で頭から捨てる（PIN_LOG_MAX）。際限なく伸びると保存JSONが膨らむため。
+       [実装中に踏んだ罠] ログの行に action 名をそのままCSSクラスとして付けたところ、'ledger' が
+       写真台帳の全画面オーバーレイ .ledger{display:none} と同名で、「台帳掲載のON/OFF」の行だけが
+       記録はされているのに画面から消えていた。単体試験では見えず、実ブラウザの画面を見て気づいた。
+       action 名は今後も増えるので lg- を付けた専用の名前空間にした。
+       → 教訓：状態を表すCSSクラスに、他所でブロック名として使われうる一般名詞をそのまま使わない。
+  build v7.98 (配信ファイルを index.html に＋キャッシュ抑制とホーム画面追加)  —
+       [index.html] 本体のファイル名を index.html にした。これで
+       https://94ykondo-eng.github.io/zumenkanri01/ だけで開ける。中身は従来どおりの単一HTML。
+       二重管理を避けるため、同じ中身のファイルを2つ置く形にはしていない（片方だけ差し替えて
+       古い版が生き残る事故を防ぐため）。lint・テスト・検証スクリプトの参照先もすべて index.html へ。
+       [キャッシュ抑制] no-cache 系の meta を3つ追加。ただしGitHub Pagesは自分で
+       Cache-Control: max-age=600 を付けるうえ、この meta は文書自体には効かないブラウザもある。
+       確実な確かめ方は従来どおり「上部バーのビルド番号を見る」。効けば儲けもの、という位置づけ。
+       [ホーム画面追加] apple-mobile-web-app-capable 等の meta とアイコンを追加。アイコンは
+       単一ファイルを崩さないよう data URL で持つ（180px・約5KB）。iOSの版によっては data URL の
+       apple-touch-icon を読まないため、同梱の apple-touch-icon.png を同じ場所に置いてもよい（任意）。
+       [ホーム画面起動時の注意] standalone ではSafariのUIが無く、a[download] や pdf.save() で
+       ファイルが保存されないことがある。押しても何も起きないと原因が分からないので、
+       PDF・Excelの書き出し前に一度だけ「保存できないときはSafariで」と知らせる。
 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>図面共有システム — タブレット版</title>
+<!-- キャッシュ抑制：GitHub Pages は Cache-Control: max-age=600 を自分で付けるので、
+     この meta だけで確実に最新が来るわけではない（ブラウザによっては文書自体には効かない）。
+     効かなかったときの確かめ方は「上部バーのビルド番号を見る」→ 違えば再読込、が引き続き基本。 -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<!-- ホーム画面に追加したときの見え方（iPad想定）。単一ファイルを崩さないよう画像はdata URLで持つ。
+     data URL のアイコンを読まないiOSに備えて apple-touch-icon.png も同じ場所に置いてよい（任意）。 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="図面共有">
+<meta name="theme-color" content="#0E1218">
+<link rel="apple-touch-icon" href="data:image/png;base64,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">
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAATVklEQVR42u2daYxk1XXHz7n3vvdqr66uGaZ7Gmalh1lsy2CWgRFRjLwRBQzI41jyIEGMjWLJcrDkIJlIUbx8si0nUeIYvMh2iB0nssFGsR0LEBAIk8AYjAkYxniYLcMsvdT26i33npMPxTLT03RXV78qz7y6f/WXlrpe33r3984995x7zsPS6BhYWc0nYW+BlYXDysJhZeGwsnBYWTisLBxWFg4rC4eVhcPKwmFlZeGwsnBYWTisLBxWFg4rC4eVhcPKwmFl4bCycFhZWTisLBxWFg4rC4eVhcPKwmFl4bCycFhZOKyGRqp/l0ZEKQUzM9v73J8nWwgiIqKzDA4pZRiGtemWcJQQ1j4lLwY2YeRms/l8zhhz1sAhpZydra1ZM/GBW2+64rKLS6WiMQYR7YwmBQYixto89fSv7/3Jz57c83S5XAaAxE00Jt7ZR0oxc2L6Ix/Z9YXP3rFqfAzYgF1X+rWuOH6rcedd37n9M5/LZDNCiGT5UInbjHqtfuutN33tq1+Ogvbs1JQQCIAADGAtR9IGhElJddttn8znc5/81B1eJnPmWg4hhO+3t23d9PgjPzVaa22ktN5Gv/lgrfVIdfyjt378G9+8e7Ra0Tox/yPJyRMCoyD8s4/d5GWzURRbMgYgRJRSxmHj47feVCwWEiQjSTgQMY51pVq5fPvFOgyllHbmBrahjcLwgsmNmzdPtttBgnvDJH0OY8xoZWRFdVRrc/rWhIit55HMVkUInHtvqVgsrDpnpTEmwU1hwg4pEc07PkTI5zJ2M5uIwjA2pwW+Os7HmR7nmBPPYGYlZaPVvuUzf9do+a7jLIcQZugfYZ1dYP8AXubgGYCZ/Hb0udtuvGjbpB8E4tTLJR5JUgMgHRFjrR/a/cx0rRGGMcRx71OgBBgC7g8bQgACGOoXIcsaPANivlxotYLbbr5OKsF9fVAGBkeHj1Ix3w7Dj/7J+9afNxZGsVj6F0OEfa/UV1fzniOTjasxg5I41Qj8UK9ZWYg1Jf4ULmfwzCyFaIfRd350/3GsKSVhIGHFAcHR+YbtINp13VWXveMSoCb04lTjw08fuHzzmJtxIdnbwwAoDx2dOV7zL9w0Aaz78FAuY/DMgKrdqH/vvodjbQY2ZYODo2M/ao2WDmfrzZZcOhxSYK3RPDFTK+VcQ5ys5ci4cma2MVtvh62aH2qRNBzLGTwzO0pN1xoDTnAPFA4AkEIoKZWUvcHx+scRE4ZDSSmlkLJzfe4HHD0PvuPUq4GHjmwQ08rCYWXhsLJwWFk4rCwcVhYOKwvHWaXOMQICNswG2AAbZgJmAHvwVQ0rE9yJUjooBKKLEpUcEV6MxlWu1EIDEXPMBAACAYfyGMrQwWGYESGD0pEKAKbjdovil8O6btFDjYN+rGvToSRc75Xzwhl1sgAQkw7YMIMcsgMpQwQHASNgSXmGzcth47+bR55ovfJ484hv4mkTaCJCRsR/euE5JcSozOSkc3lh/JL82GWF8XVeUaJsmoiBxdBYkWGBQzMVpBuRebh+8N+mX/yP2ZfrJiSArFACMIMKFXQyHqyAGeommjXh3See/96J50vSe+/Iup2jmy7Nj7lCNU2kUFg4UmIwAKCssnvbU391+L/urx2QiBmhysoDAGIAYD65WowBABQigMgoCQAx0w+nX/zXqRfeVV7z1xNXTGarDRMAQOpNSMrhMMw5oRDxm8ee+eKRJ2Z0OPIqE2wWTH93jIhhAAAJWJQuADxQO/jL1r2fHr/kppXbmNknnW4vRKSbjJJ0X47qu1766e0HHwnZlJVrmM0Sj0UwQOdTZeWGbG4/+Miul376clQvSdekutIztXBo5oJ0djePXPfijx+oHaiqrARc5lwaZglYVdkHageue/HHu5tHCtLR6eVDpJQMKqvMw/VDO397X8NEFZXRnMzRMQbQTBWVaZho52/ve7h+qKwymsnCcdasJgXp7mke+cT+BwWgJ2Tik6eZPCEF4Cf2P7ineaSQ0vUlbXAQsCfk0di/Zd8vZnTgCdmnaTPMnpAzOrhl3y+Oxr4nJKUu4J46y8GgUH7+8O5DUbPY5wfaMBeleyhqfv7wboUyfcmYVMFhmIvSe7Rx6IczeyvSi/vvCsRMFen9cGbvo41DRemlbHEZdJyjE29i7qXbT+cjnc+e/vFOYLtF8ZeOPCEBGZeSV331ogAAgACI3detMIIE/NKRJy7OjwlAYp43S7fw4LsaHacdDlcJdFTG7bE0QSB6jsi48vTSD82UkZm/OfQ/jzWPrFTZbp1QYkBAz0FHQicozsSx4TAGBhDYxQW4KN3Hmke+fvyZPz/30sAE8wbXFx78YnCwo6TnyDTDgYiHppovH55ptPwe4BAIzSD+3dF6zlVzbm+ntQOK+j3Te/NCEXRHhiGRzzBRfOB4+MJhM9UAAFktehdMOGtWohDUCqCLFjQElBfqnum978V1TPP3mVhg8N3AoZSs1ZvEjCmFgxGh1oqO19rNdiB7qZXFSJuZRthy9JwgJwHn0PnfeGpfWPOEokVNMAMAiFKu/cuX6vc8Hj53kNpRJ9ECAkXW9baeV7r+8uxFG6kZvLrWLGh9PFT7gtruE69sc6o+x6enXRYYfFdwSFVvBgMonv59wYFE/Ja11Uu2TkR+s7dl5ed74osnzynn51YUamZPZn519Fh7n8liV1FLdOXsPz9U+5f/ZGKRdUUh++qEMgBR+5e/C57eV/7QleWdOzhavDxVIrbZ6HFz6apzQxOo06ZwgcF3ZznU9GxDJd0v8MzyOcLYUBz7oe4NDkMcRNpRYs79JWApovun9ktEXtQRNSTKuemv/6L2/UdktYiAQASntkMR+QwAz3zrfmpHox99D9X8hdcXBpaI90/tv3nkLQHp0y3HAoPvyucwEER6wC7poOFABIHY+Vm6z4Ed+ywQT157GSCL8nDceL49ncHF1hTDophtPfRs/Z7dckUJiObfBhABglxRqt+z25tcnf+DbdQIQOICbmkG1fPt6cNxY9zJR0zY3eC7i92AQBx8l980xDmI2UX1VOvY0dh3UfBiCwC1gtoPHkUp3ti+vtmcMKMUtR88Sq2FyOj8rYviaOw/1TrmYhdOjw2CDcjRBQbEF8MZDYs1XSEWOS/41b54/zHMurCoeSfGrBvvPxb8ap/IeQv/PSJqoBfDGehmabNwDPabdGF1mQEhePbAknK0TBw8ewAQuolDpel42JDVrSCypvjgCRDYbcSRGQTGB0+wJhiy0+e24s3KwnGS8RA5D5Z4TlDkPBi+LqpDBgczKuFtngDqeo1ABCJv8wQqMWzvBkkPHF1VLArBkc68fb0oZsF0nX8pZjNvX8+R7qYDIlqH9EzDgpi258fzwjELJ2MRuB25G8ZyO7ZQow1qsTynktRo53ZscTeMcTtaeN4NU1442/PjxJQORNIAh0AMWW/NVSfcQsgGFzUe7bhy4zudtedQow3qze+AEtRoO2vPqdz4Tm7HC5sNBAjZTLiFrblqyMl3qrRw9Gw5ICYzojLbC+MBGblwrSICayNGcituu1ZVi1Rvg0CQAhABXzvpIwUIpHpbVYsrbrtWjORYm4VtgUQRkNleGB9RmZhMOpaWlPgcnSMUl+bHujr/JZD9yJ1cPfbFm3OXbmI/orrPUQyGwBBHMdV99qPcpZvGvnizO7ma/WjRUz9LG8BZopSUQ0oUMZnthfFRlQnJLN4GViC3I1nOr/zLDwZP/a712PPRb//P1HwAUOWce/7q/I4tmQs3gCZuL05Gx3SNqsz2wni8qOmycAx+ZQlZT7jFi/KrHqwfKIkuzp0LZK1BQ/aijdlLJqnRpnYIACLrdfYynV+7OSkoEJsUX55fPeEWQ9ap2bCkZytrGFyUN67YwtC1ZUcERPJDqvsgUZZyspQDiVT3yQ+XcMyYgQFuXLHFRWlSFApJDxwK0adoR2Fic2bUZy26f3o7DikDa8PaAEPHIe3+0z7rzZnRHYUJnyKFNs5xRipmKqnMtZWNIRnRw1dbSkXCSXdQhGSurWwsqUycrqLZVMEhUUQU7xzdtFJlo4HsJxEgInOOk905uimiWKar40+qvgwCBGTOc4tXj6xvcTyASJRE0aT4qtKa87xSQDplqbl0Jt4+OLrJBUn99w2J2RPyhsokcArfipo2OCRik6IL86uuLE00KeprWyaJ2KT44vyqK0sTrT7/LwtHYk+zK+QNlUnq89OMgDGb6yuTCqXtz3HWuKUBxVeV1qzrpx+AAAHptV7pPeW1IWmZxuaTKfxKCBCSqTrZnaOb/L7tIDqu6Psr54+7xfS5oml2SAUITebaysaK7FfsQTOVpPv+kY2aTVobkqYUDgSf4guy1atH1jX60HBYIrYovqKweltuRZtigRaOs215YebrK5MuiuTrzxgYYNeKLQpEis+VphYOiehTfFlh/C25FX6iD/ecZEqKmxin+fS5ZspJ58PVLWGibkGKkylDBIdEEZJ+V3ltgnvadCdThgiOTihitVu8trKxkdBEpjuZMke/h26CxEzMuHRH7tX3oTB3rtDd/8PI6OvK53/3+HMxk1j2AU9idlFcP3I+EREDdn29Xgb/xk1j6vRgTDccniOF4+Q81VtnHykw46qcp7pvjmOY35YZf3d17Y+O7y0vr1WoRGyY6MqRc69asU6zLjpu97D1NvjX4VBKtV2F6YWDhcBn909lRg432+3eGsZNNYIn9x5zHdn9Y2SY88I9P6wAIPAyD4ejQZ6sV5547pUmR3IpTm5vg38DDqnqzaYmwrQ2jGOGct5dWc5mFPfWavKVGb9S9Hro1vhHIxt+PrXv+WA6K3psu4MAIem1bukDKzdljcrB0p7j5Qy+02rSQY2IkNaGccx8brWwbqISttzelpV9RxsbVpXKeW9JllkzZWT2ep7cc+ixvHB662AvUcyY8CMjGy9cPf5mnWj7MXh4tUmtmsorsWjJxVntc0SaONZBZKTgHuAg5jCmIDJLur8MDLr9/pGN3zj2zJQOHBQ93OLXkylxFEVEeomE9Tz4DhyGMIzNgCdr0FtZROj0xevt57UrLO1HIIZsJrzSu8tr/Z7S6ycnUwLWsqev0Nvg51zBxjn6EfNAYnN9ZdLr7WDOcCRThhSOTqrlop6ODw5PMmVI4ejsaXs7Pjg8yZThhUOh8E30vvK6rdmqT3GXJW1DlUwZXjgAIGYqqswfVzYEpLssiRuqZMpQwyFAaNLXjGzo/vhguitTLBynupYUX5Ctvq+744Opr0yxcMz1Ioj5hsqkJ+SicfTUV6ZYOE7f00ZXlibekV+18J52GCpTLByn72lBgfzg6CbqwhVNd2WKhWMe4xFwfHV5/XqvFLx5p4ZhqEyxcMyzXoRkRp3c1SPrW28SuhiSyhQLx7xfGzXrGyqT1TcLeg5lMsXC0dnTok/6rbmVO4rzpFqGNpli4XjDNhDzruoW5zTbMLTJFAvHG15Fm+LLC6vfempJ3DAnUywcp+xHctK9prIxOGk/MszJFAvHKZGMkOLrRs5fe1IkY5iTKRaOU/a0AekJr/Su144PDnkyxcJx+p7W7KpuKUhHMw15MsXCMXdP26Z4a27FFYXVbYpjpmFOpszRoEsTDJE2RhvTQ+UnM77+cZNck1HDnJPqQyObHpjd36BoV2XzKpmfif1k+wEtZ/DMjIjamDTDwczlYl55I6OOAtHDrcdysbaiUnYzbuKvvLmmvO3C+rPPNU98bPIdwslVwU3aG13G4JkBlejUdKQSDkTMZty7733wsT3PhVEv2QpE2PdK/ZFq3nNksv4AIWciAeOzI0X+/j/8O7mY+OuWljN4ZpZCtMMojmNn0ZcWnnVwMHO90WoH0d9/9z6I494fSiXAUPIvyhIAoXbXVZ3R7F/sOQye7Mu7uJY1eAbEfLnQagV6sRfOnU1wdEo9/3D72xot33UcXNal+lb4hWhiw0Rq/eY+FSsvc/AMwEx+OxodKRo9iHJ71Q8U5qwmhiif8+7+8qfP6KgBv/ZqSOIzPPQVhnEQhqevy4l3d0kYDiGElPOsqczQ8oPXZsBqWRSjmKfmBhGVUmcuHFLKeqN5Ymp6RXU0juM5ZAuBloxE1r95n0nfbx89dnzeJ3M5nlhyjoWjZqZmHt/9pPI8M/BN+dCKiFzPe2HvS7/5zd5sNkNEZxwcAEDEbsb7x7u+HbbbrusYQ3bmBuDsG2Mcr/jVO7/daDRVohtdLI2OJbyy1Oq3/OmHv/bVL0dB2/eD11YT6230gwxSUuXL1bvu+vonP3WHl8kk65Mm7MIYY0rl4p13fltr/YXP3rFqfAzYwNBnsPol4fitxle+8re3f+ZzmWwmee8mWcvxuv2Yna2tWTPxgRuuueKyi0ulojEG0VqO5DYsiLE2Tz3963t/8rMn9zxdLpf7sZXtCxwdPsIw9Bst4SghhJ3P5AEBNmHkZrP5fK5P7n+/4OjsvKUUv4/Ou0OzqghBRAluT/rrc8xxpLW2G9r+bmL7C5+9xVYWDisLh5WFw8rCYWXhsLJwWFk4rCwcVhYOKwuHlZWFw8rCYWXhsLJwWFk4rCwcVhYOKwuHlYXDysJhZWXhsLJwWFk4rCwcVhYOKwuHlYXDysJhZeGwGhr9P9VRNintoLyaAAAAAElFTkSuQmCC">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1615,6 +1702,12 @@
   .pg-name{font-size:13px;font-weight:700;color:var(--text)}
   .pg-tools{display:flex;gap:6px;align-items:center;flex-shrink:0}
   .pg-mini{font-size:11px;padding:4px 9px;border-radius:7px;background:var(--panel2);border:1px solid var(--line2);color:var(--muted)}
+  .pg-move{padding:4px 8px;display:flex;align-items:center;justify-content:center}
+  /* アイコンがタップを吸うと親のbuttonにclickが届かない（iOSで既往あり） */
+  .pg-move svg{width:15px;height:15px;display:block;pointer-events:none}
+  /* 端の区分では押せなくする。display:none だと並びが動いて押し間違いのもとなので、
+     見た目を薄くして当たり判定だけ消す（場所は保つ） */
+  .pg-move[disabled]{opacity:.28;pointer-events:none}
   .pg-add{font-size:11px;font-weight:700;padding:5px 11px;border-radius:7px;background:var(--panel3);border:1px solid var(--signal);color:#fff}
   .pg-mini:active,.pg-add:active{transform:scale(.95)}
   .pg-empty{grid-column:1/-1;font-size:12px;color:var(--muted);padding:4px 2px}
@@ -1658,17 +1751,38 @@
   .photo-cell.empty .photo-slot-tag{position:static;margin:0;color:var(--muted);background:transparent;
     font-size:10.5px;line-height:1.2;max-width:100%}
   .photo-empty{grid-column:1/-1;text-align:center;color:var(--muted2);font-size:12.5px;padding:18px;line-height:1.6;border:1px dashed var(--line2);border-radius:12px}
+  /* ログの見出し＝開閉ボタン。押しても見出しの位置は動かず、下の中身だけ伸縮する */
+  .pin-log-head{display:flex;align-items:center;gap:8px;width:100%;margin:2px 2px 8px;padding:6px 2px;
+    background:none;border:none;color:var(--muted2);font-family:var(--mono);font-size:11px;letter-spacing:.6px;text-transform:uppercase}
+  .pin-log-head .cnt{font-size:10.5px;padding:1px 7px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .pin-log-head .sp{flex:1}
+  .pin-log-head svg{width:16px;height:16px;pointer-events:none;transition:transform .18s ease}
+  .pin-log-head.open svg{transform:rotate(180deg)}
   .pin-log{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+  .pin-log[hidden]{display:none}
+  .pin-log-date{font-size:11px;color:var(--muted2);font-family:var(--mono);margin:8px 2px 2px}
+  .pin-log-date:first-child{margin-top:0}
+  .pin-log-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .pin-log-l1{display:flex;align-items:center;gap:8px;min-width:0}
+  .pin-log-detail{font-size:11.5px;color:var(--muted2);line-height:1.35;word-break:break-word}
+  .pin-log-more{align-self:flex-start;margin-top:2px;font-size:11.5px;padding:5px 12px;border-radius:8px;
+    background:var(--panel2);border:1px solid var(--line2);color:var(--muted)}
   .pin-log-empty{color:var(--muted2);font-size:12.5px;padding:10px 2px}
-  .pin-log-row{display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);
+  .pin-log-row{display:flex;align-items:flex-start;gap:10px;background:var(--panel2);border:1px solid var(--line);
     border-radius:10px;padding:9px 12px}
-  .pin-log-dot{flex-shrink:0;width:8px;height:8px;border-radius:50%}
-  .pin-log-row.shoot .pin-log-dot{background:#3BA6FF}
-  .pin-log-row.update .pin-log-dot{background:#F5A524}
-  .pin-log-row.delete .pin-log-dot{background:#F0685E}
+  .pin-log-dot{flex-shrink:0;width:8px;height:8px;border-radius:50%;margin-top:5px}
+  /* action 名は .ledger（写真台帳の全画面オーバーレイ）等と衝突するので lg- を付ける */
+  .pin-log-row.lg-shoot .pin-log-dot{background:#3BA6FF}
+  .pin-log-row.lg-update .pin-log-dot{background:#F5A524}
+  .pin-log-row.lg-delete .pin-log-dot{background:#F0685E}
+  .pin-log-row.lg-rotate .pin-log-dot{background:#B08CFF}
+  .pin-log-row.lg-group .pin-log-dot{background:#22C48A}
+  .pin-log-row.lg-classify .pin-log-dot{background:#22C48A}
+  .pin-log-row.lg-ledger .pin-log-dot{background:#7A8794}
+  .pin-log-row.lg-note .pin-log-dot{background:#7A8794}
   .pin-log-label{flex:1;min-width:0;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pin-log-action{flex-shrink:0;font-size:11px;color:var(--muted2);font-family:var(--mono)}
-  .pin-log-time{flex-shrink:0;font-size:11px;color:var(--muted2);font-family:var(--mono)}
+  .pin-log-time{flex-shrink:0;font-size:11px;color:var(--muted2);font-family:var(--mono);margin-top:1px}
   .pin-del{width:100%;padding:13px;border-radius:12px;background:rgba(240,68,56,.1);border:1px solid rgba(240,68,56,.4);
     color:#FF8A7F;font-weight:600;font-size:14px}
   .pin-del:active{transform:scale(.98)}
@@ -2055,6 +2169,12 @@
   .panno-done{height:42px;padding:0 18px;border-radius:11px;font-size:14px;font-weight:700;
     background:linear-gradient(180deg,var(--signal),var(--signal-dim));color:var(--signal-ink)}
   .panno-done:active{transform:scale(.96)}
+  .panno-rot{width:42px;height:42px;border-radius:11px;flex-shrink:0;
+    background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    display:flex;align-items:center;justify-content:center}
+  .panno-rot svg{width:20px;height:20px;pointer-events:none} /* アイコンがclickを吸わない（iOS） */
+  .panno-rot:active{transform:scale(.96)}
+  .panno-rot[disabled]{opacity:.35;pointer-events:none}
   /* 写真＋キャンバスのステージ */
   .panno-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;
     background:radial-gradient(circle at 50% 40%,#12171F,#0B0E13);touch-action:none;padding:12px}
@@ -2126,7 +2246,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="Googleドライブからの復元／バックアップの取りこぼしを修正">build v7.93</button>
+          data-desc="配信ファイルをindex.htmlに／ホーム画面追加に対応">build v7.98</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2457,8 +2577,11 @@
     </div>
   </div>
   <div class="photo-grid" id="photoGrid"></div>
-  <div class="picker-lbl" style="margin-top:6px">ログ</div>
-  <div class="pin-log" id="pinLog"></div>
+  <button class="pin-log-head" id="pinLogHead" style="margin-top:6px" aria-expanded="false">
+    <span>ログ</span><span class="cnt" id="pinLogCount">0</span><span class="sp"></span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
+  <div class="pin-log" id="pinLog" hidden></div>
   <button class="pin-del" id="pinDelete">このピンを削除</button>
 </div>
 <input type="file" id="photoInput" accept="image/*" multiple hidden>
@@ -2791,6 +2914,8 @@
   <div class="panno-top">
     <button class="panno-done" id="pannoDone" style="background:var(--panel2);border:1px solid var(--line);color:var(--text)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M15 18l-6-6 6-6"/></svg></button>
     <h3 id="pannoTitle">写真に書き込み</h3>
+    <button class="panno-rot" id="pannoRotL" title="左に90°回転"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></button>
+    <button class="panno-rot" id="pannoRotR" title="右に90°回転"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
     <button class="panno-done" id="pannoSave">完了</button>
   </div>
   <div class="panno-stage" id="pannoStage">
@@ -3005,7 +3130,23 @@ function planArr(dwgId,pinId){
 }
 function newSlot(status){ return {id:'k'+(++slotSeq), src:null, name:'', meta:{status:status||'', place:'', lines:[''], regDate:''}}; }
 // ピンの操作ログ（撮影／更新／削除）。事前に名前付きの枠があれば、その名前をラベルに使う。
-function pinLog(p,action,label){ (p.log=p.log||[]).push({time:new Date().toISOString(), action, label:label||'写真'}); }
+/* ピンの操作ログ。detail は「何から何へ」など1行の補足（無くてもよい）。
+   ログは端末保存とドライブ保存の両方に載るため、写真のdataURLなど重いものは絶対に入れない。
+   際限なく伸びると保存JSONが膨らむので、古いものから捨てて上限を設ける。 */
+const PIN_LOG_MAX=200;
+function pinLog(p,action,label,detail){
+  if(!p) return;
+  const e={time:new Date().toISOString(), action, label:label||'写真'};
+  if(detail) e.detail=String(detail).slice(0,120);
+  const arr=(p.log=p.log||[]);
+  arr.push(e);
+  if(arr.length>PIN_LOG_MAX) arr.splice(0,arr.length-PIN_LOG_MAX);
+}
+// 写真srcを持っているピンを探す（回転など、写真からピンを引きたいとき用）
+function pinOwnerOfPhoto(src,dwgId){
+  const did=dwgId||ledgerDwgId||state.selectedId;
+  return (pins[did]||[]).find(p=>(p.photos||[]).includes(src))||null;
+}
 function photoTimeLabel(src){ // 写真の撮影日時ラベル（ts=日時、無ければregDate=日付）
   const m=ledgerPhotoMeta[src];
   if(m && m.ts){ const d=new Date(m.ts); if(!isNaN(d)) return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
@@ -3016,6 +3157,18 @@ function photoTimeLabel(src){ // 写真の撮影日時ラベル（ts=日時、�
 let groupSeq=0;
 function newGid(){ return 'g'+Date.now().toString(36)+(++groupSeq).toString(36); } // 再読込後も衝突しない一意ID
 function pinGroups(p){ return p.groups||[]; } // 初期は空。ユーザーが「区分を追加」で作成する
+/* 区分の並べ替え（dir: -1=上へ / +1=下へ）。配列を直接入れ替える。
+   この並び順は表示だけの話ではなく、ledgerCells() が区分ごとに写真を並べるときの順序＝
+   写真台帳・PDF・Excel の出力順そのもの。ここを触ることは出力の並びを変えることと同義。
+   端を越える指定は「何もしない」で false を返す（呼び出し側で再描画を省ける）。 */
+function moveGroupInList(arr,gid,dir){
+  const list=arr||[];
+  const i=list.findIndex(x=>x&&x.id===gid), j=i+dir;
+  if(i<0||j<0||j>=list.length) return false;
+  const [g0]=list.splice(i,1);
+  list.splice(j,0,g0);
+  return true;
+}
 function photoGid(p,src){ return (p.photoGroup||{})[src]||null; }
 // 台帳に載せない写真（除外フラグ）。既定は「載せる」なので、除外したものだけを持つ。
 function photoOff(p,src){ return !!((p.photoOff||{})[src]); }
@@ -4587,13 +4740,13 @@ function bindLedger(){
   body.querySelectorAll('[data-gadd2]').forEach(b=>b.addEventListener('click',()=>{
     const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.gadd2); if(!p) return;
     const n=prompt('区分の名前を入力（例：調査／工事前／工事後）','');
-    if(n&&n.trim()){ (p.groups=p.groups||[]).push({id:newGid(),name:n.trim()}); renderLedger(); }
+    if(n&&n.trim()){ (p.groups=p.groups||[]).push({id:newGid(),name:n.trim()}); pinLog(p,'group','区分',`「${n.trim()}」を追加`); renderLedger(); }
   }));
   body.querySelectorAll('[data-gren2]').forEach(b=>b.addEventListener('click',()=>{
     const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.pin); if(!p) return;
     const g=pinGroups(p).find(x=>x.id===b.dataset.gren2); if(!g) return;
     const n=prompt('区分の名前',g.name);
-    if(n&&n.trim()){ g.name=n.trim(); renderLedger(); }
+    if(n&&n.trim()&&n.trim()!==g.name){ const old=g.name; g.name=n.trim(); pinLog(p,'group','区分',`「${old}」を「${g.name}」に改名`); renderLedger(); }
   }));
   body.querySelectorAll('input[data-pmeta]').forEach(inp=>inp.addEventListener('input',()=>{
     const pm=pinLedgerMeta(ledgerDwgId,inp.dataset.pin);
@@ -4760,7 +4913,7 @@ $('#ledgerCover').addEventListener('click',()=>{
 $('#ledgerPreview').addEventListener('click',()=>openLedgerPreview());
 $('#lpvClose').addEventListener('click',closeLedgerPreview);
 $('#lpvPdf').addEventListener('click',()=>exportLedgerPDF());
-$('#ledgerXlsx').addEventListener('click',()=>toast('Excel出力は次のステップで実装予定です','warn'));
+$('#ledgerXlsx').addEventListener('click',()=>exportLedgerXLSX());
 
 /* ---------------- 図面PDF出力 ---------------- */
 const DX_PAPER={ // 96dpi相当のpx（jsPDFは unit:'px' で扱う）
@@ -4807,6 +4960,7 @@ async function exportDwgPDF(){
     const pdf=new jsPDF({orientation:(pw>=ph?'landscape':'portrait'),unit:'px',format:[pw,ph]});
     if(paperKey!=='fit'){ pdf.setFillColor(255,255,255); pdf.rect(0,0,pw,ph,'F'); }
     pdf.addImage(cv.toDataURL('image/jpeg',0.9),'JPEG',dx,dy,dw,dh);
+    noteStandaloneDownload();
     pdf.save(`図面_${d.name.replace(/\s+/g,'_')}_${todayStr()}.pdf`);
     toast('図面PDFを出力しました','ok');
     closeDwgExport();
@@ -5638,10 +5792,280 @@ async function exportLedgerPDF(){
     }
     busySetLabel('PDFを書き出し中…'); busyProgress('');
     await nextPaint();
+    noteStandaloneDownload();
     const fname=`写真台帳_${d.name.replace(/\s+/g,'_')}_${todayStr()}.pdf`;
     pdf.save(fname);
     toast('PDFを出力しました','');
   }, `0/${pageCount}ページ`);
+}
+
+/* ---------------- 写真台帳 Excel出力（v7.94） ----------------
+   xlsx は「OOXMLのXML群をzipに固めたもの」。写真をセルに埋め込める無償のJSライブラリが
+   無いため（SheetJS community は画像非対応）、XMLは自前で組み立て、zip化だけJSZipに任せる。
+   要点は3つ：
+     ① 写真はセルの値ではない。xl/drawings/drawing1.xml に oneCellAnchor で
+        「何列目・何行目の左上から、幅cx・高さcyで貼る」と別途書く。
+     ② そのため行高・列幅を写真の表示サイズに合わせて明示しないと、写真が下の行へはみ出す。
+        行高はpt指定なので px×0.75 で換算する。
+     ③ 同じ写真が複数のセルに出ることがある（区分違いなど）。media は src でまとめ、
+        anchor 側だけ増やす。まとめないとファイルが写真の枚数ぶん膨らむ。
+   一覧表形式（1行1写真）。Excel側で並べ替え・絞り込み・追記ができることを優先した。 */
+const XL_EMU=9525;                      // 1px = 9525 EMU（OOXMLの長さ単位）
+const XL_PHOTO_W=240, XL_PHOTO_H=180;   // 写真セルの表示上限px
+const XL_PAD=4;                         // 写真とセル枠のすき間px
+const XL_FIRST_ROW=4;                   // 1:表題 2:出力日 3:見出し → 4行目からデータ（1始まり）
+const XL_HEAD=['No.','ピン','区分','内容','施工状況','場所','登録日','記述','写真'];
+const XL_COLW=[5.5,16,12,18,10,18,12,42,(XL_PHOTO_W+XL_PAD*2-5)/7];  // 幅は文字数単位＝(px-5)/7
+
+function xlsxEsc(v){
+  return String(v==null?'':v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&apos;')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'');   // XMLに載せられない制御文字は捨てる
+}
+// 縦横比を保って box に収めたときの表示サイズ
+function xlsxFitBox(w,h,maxW,maxH){
+  if(!w||!h) return {w:maxW,h:maxH};
+  const k=Math.min(maxW/w, maxH/h);
+  return {w:Math.max(1,Math.round(w*k)), h:Math.max(1,Math.round(h*k))};
+}
+function xlsxColName(i){ // 0→A
+  let n=i+1, s='';
+  while(n>0){ const r=(n-1)%26; s=String.fromCharCode(65+r)+s; n=Math.floor((n-1)/26); }
+  return s;
+}
+function xlsxRef(col,row){ return xlsxColName(col)+row; }
+function xlsxCellText(col,row,style,text){
+  const ref=xlsxRef(col,row);
+  if(text==null||text==='') return `<c r="${ref}" s="${style}"/>`;
+  return `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xlsxEsc(text)}</t></is></c>`;
+}
+function xlsxCellNum(col,row,style,num){ return `<c r="${xlsxRef(col,row)}" s="${style}"><v>${num}</v></c>`; }
+
+/* 行データ（純粋な値だけ）からシートXMLを作る。画像は含まない＝テストしやすいように分けてある。
+   rows[i] = {no,pin,group,name,status,place,date,desc,photoH(px)|null} */
+function xlsxSheetXml(rows,title,subtitle){
+  const last=XL_FIRST_ROW+rows.length-1;
+  const cols=XL_COLW.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w.toFixed(2)}" customWidth="1"/>`).join('');
+  const head=XL_HEAD.map((h,i)=>xlsxCellText(i,3,3,h)).join('');
+  const body=rows.map((r,i)=>{
+    const rn=XL_FIRST_ROW+i;
+    const ht=Math.max(20,(r.photoH?r.photoH+XL_PAD*2:20))*0.75;   // px→pt
+    const cells=[
+      xlsxCellNum(0,rn,5,r.no),
+      xlsxCellText(1,rn,4,r.pin),
+      xlsxCellText(2,rn,4,r.group),
+      xlsxCellText(3,rn,4,r.name),
+      xlsxCellText(4,rn,5,r.status),
+      xlsxCellText(5,rn,4,r.place),
+      xlsxCellText(6,rn,5,r.date),
+      xlsxCellText(7,rn,4,r.desc),
+      // 写真セル：画像そのものは drawing 側。ここは枠と「未撮影」の文字だけ受け持つ
+      r.photoH? `<c r="${xlsxRef(8,rn)}" s="6"/>` : xlsxCellText(8,rn,7,'未撮影')
+    ].join('');
+    return `<row r="${rn}" ht="${ht.toFixed(2)}" customHeight="1">${cells}</row>`;
+  }).join('');
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    +'<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'
+    +`<dimension ref="A1:I${last}"/>`
+    +'<sheetViews><sheetView showGridLines="0" workbookViewId="0">'
+    +`<pane ySplit="3" topLeftCell="A${XL_FIRST_ROW}" activePane="bottomLeft" state="frozen"/>`
+    +'</sheetView></sheetViews>'
+    +'<sheetFormatPr defaultRowHeight="18"/>'
+    +`<cols>${cols}</cols>`
+    +'<sheetData>'
+    +`<row r="1" ht="24" customHeight="1">${xlsxCellText(0,1,1,title)}</row>`
+    +`<row r="2" ht="16" customHeight="1">${xlsxCellText(0,2,2,subtitle)}</row>`
+    +`<row r="3" ht="22" customHeight="1">${head}</row>`
+    +body
+    +'</sheetData>'
+    +`<autoFilter ref="A3:I${last}"/>`
+    +'<mergeCells count="2"><mergeCell ref="A1:I1"/><mergeCell ref="A2:I2"/></mergeCells>'
+    +'<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>'
+    +'<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>'
+    +'<drawing r:id="rId1"/>'
+    +'</worksheet>';
+}
+
+/* anchors[i] = {col,row(0始まり),w,h(px),rid} */
+function xlsxDrawingXml(anchors){
+  const body=anchors.map((a,i)=>
+     '<xdr:oneCellAnchor>'
+    +`<xdr:from><xdr:col>${a.col}</xdr:col><xdr:colOff>${XL_PAD*XL_EMU}</xdr:colOff>`
+    +`<xdr:row>${a.row}</xdr:row><xdr:rowOff>${XL_PAD*XL_EMU}</xdr:rowOff></xdr:from>`
+    +`<xdr:ext cx="${a.w*XL_EMU}" cy="${a.h*XL_EMU}"/>`
+    +'<xdr:pic>'
+    +`<xdr:nvPicPr><xdr:cNvPr id="${i+2}" name="photo${i+1}"/>`
+    +'<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
+    +`<xdr:blipFill><a:blip r:embed="${a.rid}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>`
+    +`<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${a.w*XL_EMU}" cy="${a.h*XL_EMU}"/></a:xfrm>`
+    +'<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>'
+    +'</xdr:pic><xdr:clientData/></xdr:oneCellAnchor>').join('');
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"'
+    +' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+    +' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    +body+'</xdr:wsDr>';
+}
+
+function xlsxStylesXml(){
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    +'<fonts count="5">'
+    +'<font><sz val="11"/><name val="Yu Gothic"/></font>'
+    +'<font><b/><sz val="14"/><name val="Yu Gothic"/></font>'
+    +'<font><sz val="10"/><color rgb="FF666666"/><name val="Yu Gothic"/></font>'
+    +'<font><b/><sz val="11"/><name val="Yu Gothic"/></font>'
+    +'<font><b/><sz val="11"/><color rgb="FFB00020"/><name val="Yu Gothic"/></font>'
+    +'</fonts>'
+    +'<fills count="3"><fill><patternFill patternType="none"/></fill>'
+    +'<fill><patternFill patternType="gray125"/></fill>'
+    +'<fill><patternFill patternType="solid"><fgColor rgb="FFEDF0F3"/><bgColor indexed="64"/></patternFill></fill></fills>'
+    +'<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'
+    +'<border><left style="thin"><color rgb="FFB0B7BF"/></left><right style="thin"><color rgb="FFB0B7BF"/></right>'
+    +'<top style="thin"><color rgb="FFB0B7BF"/></top><bottom style="thin"><color rgb="FFB0B7BF"/></bottom><diagonal/></border></borders>'
+    +'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    +'<cellXfs count="8">'
+    +'<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'                                                              // 0 既定
+    +'<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>'   // 1 表題
+    +'<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>'   // 2 副題
+    +'<xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' // 3 見出し
+    +'<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>'  // 4 本文
+    +'<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="top"/></xf>' // 5 中央寄せ（縦は他の列と同じ上寄せ）
+    +'<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>'                                              // 6 写真枠
+    +'<xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' // 7 未撮影
+    +'</cellXfs>'
+    +'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+    +'</styleSheet>';
+}
+function xlsxContentTypes(){
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    +'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    +'<Default Extension="xml" ContentType="application/xml"/>'
+    +'<Default Extension="jpeg" ContentType="image/jpeg"/>'
+    +'<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+    +'<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+    +'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+    +'<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+    +'</Types>';
+}
+
+function loadJSZip(){
+  if(window.JSZip) return Promise.resolve();
+  if(jsZipLoading) return jsZipLoading;
+  jsZipLoading=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload=()=>res(); s.onerror=()=>rej(new Error('JSZip load failed'));
+    document.head.appendChild(s);
+  });
+  return jsZipLoading;
+}
+let jsZipLoading=null;
+
+/* ホーム画面から起動した状態（standalone）では、iOSはSafariのUIを持たないため
+   a[download] や pdf.save() でファイルが保存されないことがある。押したのに何も起きない、と
+   なると原因が分からないので、書き出しの前に一度だけ知らせる。 */
+function isStandaloneApp(){
+  try{ return !!(window.navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)); }
+  catch(_){ return false; }
+}
+let standaloneDlNoticed=false;
+function noteStandaloneDownload(){
+  if(!isStandaloneApp() || standaloneDlNoticed) return;
+  standaloneDlNoticed=true;
+  toast('ホーム画面から起動中です。保存できないときはSafariで開いてお試しください','warn');
+}
+function downloadBlob(blob,fname){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=fname;
+  document.body.appendChild(a); a.click();
+  // iOS Safari は click 直後に revoke するとダウンロードが始まらないことがあるので少し待つ
+  setTimeout(()=>{ try{ a.remove(); URL.revokeObjectURL(url); }catch(_){} },4000);
+}
+
+async function exportLedgerXLSX(){
+  const d=drawings.find(x=>x.id===ledgerDwgId);
+  const cells=ledgerCells();
+  if(!cells.length){ toast('写真も枠もないため出力できません','warn'); return; }
+  if(!state.online){ toast('Excel出力はオンライン時のみ利用できます','warn'); return; }
+  await withBusy('Excelを生成中…', async()=>{
+    try{ busyProgress('ライブラリを準備中'); await loadJSZip(); }
+    catch(e){ toast('Excel用ライブラリの読み込みに失敗しました（通信環境をご確認ください）','warn'); return; }
+
+    const media=[], bySrc={}, rows=[], anchors=[];
+    let skipped=0;
+    for(let i=0;i<cells.length;i++){
+      const c=cells[i];
+      busyProgress(`${i+1}/${cells.length}枚`);
+      if(i%8===0) await nextPaint();        // 進捗を画面へ返す（写真が多いと数十秒かかる）
+      let photoH=null;
+      if(c.src){
+        try{
+          const rec=await cellImage(c.src);           // PDFと同じ縮小キャッシュを使い回す
+          const box=xlsxFitBox(rec.w,rec.h,XL_PHOTO_W,XL_PHOTO_H);
+          let mi=bySrc[c.src];
+          if(mi===undefined){
+            const b64=rec.cv.toDataURL('image/jpeg',0.85).split(',')[1];
+            media.push(b64); mi=media.length-1; bySrc[c.src]=mi;
+          }
+          anchors.push({col:8,row:XL_FIRST_ROW+i-1,w:box.w,h:box.h,rid:'rId'+(mi+1)});
+          photoH=box.h;
+        }catch(_){ skipped++; }   // 1枚読めなくても全体は出す（枠だけ空で残る）
+      }
+      rows.push({
+        no:i+1,
+        pin:c.title||'',
+        group:c.groupName||'',
+        name:c.name||'',
+        status:STATUS_LABELS[c.status]||'',
+        place:c.place||'',
+        date:c.regDate||'',
+        desc:(c.lines||[]).join('\n'),
+        photoH
+      });
+    }
+
+    busySetLabel('Excelを書き出し中…'); busyProgress('');
+    await nextPaint();
+    const zip=new JSZip();
+    zip.file('[Content_Types].xml',xlsxContentTypes());
+    zip.file('_rels/.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+      +'</Relationships>');
+    zip.file('xl/workbook.xml','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+      +'<sheets><sheet name="写真台帳" sheetId="1" r:id="rId1"/></sheets></workbook>');
+    zip.file('xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+      +'<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+      +'</Relationships>');
+    zip.file('xl/styles.xml',xlsxStylesXml());
+    zip.file('xl/worksheets/sheet1.xml',
+      xlsxSheetXml(rows,`写真台帳　${d?d.name:''}`,`出力日：${todayStr()}　写真${cells.length-rows.filter(r=>!r.photoH).length}枚／全${cells.length}件`));
+    zip.file('xl/worksheets/_rels/sheet1.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>'
+      +'</Relationships>');
+    zip.file('xl/drawings/drawing1.xml',xlsxDrawingXml(anchors));
+    zip.file('xl/drawings/_rels/drawing1.xml.rels','<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +media.map((_,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${i+1}.jpeg"/>`).join('')
+      +'</Relationships>');
+    media.forEach((b64,i)=>zip.file(`xl/media/image${i+1}.jpeg`,b64,{base64:true}));
+
+    let blob;
+    try{ blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:3}}); }
+    catch(e){ toast('Excelの書き出しに失敗しました（写真が多すぎる可能性があります）','warn'); return; }
+    noteStandaloneDownload();
+    downloadBlob(blob,`写真台帳_${(d?d.name:'図面').replace(/\s+/g,'_')}_${todayStr()}.xlsx`);
+    toast(skipped?`Excelを出力しました（写真${skipped}枚は読み込めませんでした）`:'Excelを出力しました', skipped?'warn':'');
+  }, `0/${cells.length}枚`);
 }
 
 /* ===== 写真注釈エディタ（ペン＋図形フルセット）=====
@@ -5734,6 +6158,86 @@ function pannoSnapshot(item){
 // 画面ピクセル許容量を注釈論理座標に変換（ハンドルの当たり判定用）
 function pannoTol(px){ const r=pannoCanvas.getBoundingClientRect(); return px*pannoCanvas.width/r.width; }
 
+/* ===== 写真の回転（左右90°・v7.96）=====
+   「見た目だけ回す」のではなく写真そのものを作り直して差し替える。src が全域のキーなので、
+   remapPhotoSrc() を通せばサムネイル・拡大・写真台帳・PDF・Excel が一度に正しい向きになる。
+   一緒に回さないとズレるものが3つある：①注釈の座標 ②IndexedDBの原寸 ③表示倍率（縦横が入れ替わる）。 */
+
+// 注釈の論理座標（長辺1000正規化・元の論理サイズ lw×lh）を90°回す。
+// 右(dir=1): (x,y)→(lh-y, x) / 左(dir=-1): (x,y)→(y, lw-x)。回しても長辺は1000のまま。
+function rotateInkPoint(x,y,dir,lw,lh){
+  return dir>0 ? {x:lh-y, y:x} : {x:y, y:lw-x};
+}
+function rotateInkItems(arr,dir,lw,lh){
+  const R=(x,y)=>rotateInkPoint(x,y,dir,lw,lh);
+  (arr||[]).forEach(it=>{
+    if(!it) return;
+    if(it.type==='free'||it.type==='poly'){
+      it.pts=(it.pts||[]).map(p=>R(p.x,p.y));
+    } else if(it.type==='text'){
+      // 文字は読めなくなるので寝かせない。外接矩形の中心だけ回して、同じ場所を指すようにする
+      const b=textBBox(it), cx=(b.x0+b.x1)/2, cy=(b.y0+b.y1)/2, n=R(cx,cy);
+      it.x+=n.x-cx; it.y+=n.y-cy;
+    } else if(it.type==='symbol'){
+      const n=R(it.x,it.y); it.x=n.x; it.y=n.y;
+      it.rot=((it.rot||0)+dir*90+360)%360;   // 記号は写真と一緒に向きも回す
+    } else {
+      const a=R(it.x1,it.y1), b2=R(it.x2,it.y2);
+      it.x1=a.x; it.y1=a.y; it.x2=b2.x; it.y2=b2.y;
+    }
+  });
+  return arr;
+}
+// 画像そのものを90°回した dataURL を作る（縦横が入れ替わる）
+async function rotateImageDataUrl(src,dir){
+  const img=await loadDecoded(src);
+  const nw=img.naturalWidth||img.width, nh=img.naturalHeight||img.height;
+  if(!nw||!nh){ releaseImg(img); throw new Error('image size unknown'); }
+  const cv=document.createElement('canvas');
+  cv.width=nh; cv.height=nw;
+  const c=cv.getContext('2d');
+  if(dir>0){ c.translate(nh,0); c.rotate(Math.PI/2); }   // 右90°
+  else      { c.translate(0,nw); c.rotate(-Math.PI/2); } // 左90°
+  c.drawImage(img,0,0);
+  releaseImg(img);
+  const out=cv.toDataURL('image/jpeg',PHOTO_JPEG_Q);
+  if(!out||out.length<64||out===src) throw new Error('encode failed');
+  return out;
+}
+let pannoRotating=false;
+async function rotatePanno(dir){
+  const src=pannoSrc;
+  if(!src||pannoRotating) return;
+  if(pannoPolyDraft) finishPannoPoly();   // 作図途中なら確定してから回す
+  pannoRotating=true;
+  try{
+    await withBusy(dir>0?'右に90°回転中…':'左に90°回転中…', async()=>{
+      let out;
+      try{ out=await rotateImageDataUrl(src,dir); }
+      catch(_){ toast('この写真は回転できませんでした','warn'); return; }
+      // 注釈は remapPhotoSrc で移し替えられる前に、旧サイズ基準で回しておく
+      const lw=pannoCanvas.width||1000, lh=pannoCanvas.height||1000;
+      rotateInkItems(photoInk[src],dir,lw,lh);
+      // 原寸(IndexedDB)も回す。回さないと拡大表示に切り替えた瞬間だけ横向きに戻る
+      try{
+        const orig=await getOriginalFor(src);
+        if(orig) await idbPut(ORIG_PREFIX+fnv1aHash(out), await rotateImageDataUrl(orig,dir));
+      }catch(_){}
+      delete photoInkRedo[src];   // 回す前の「やり直し」は座標系が変わって意味を失う
+      remapPhotoSrc(src,out);     // 写真差し替えの唯一の口（参照6箇所以上を一括で張り替え）
+      pannoSrc=out;
+      pannoSelected=null; pannoClearMultiSel();
+      pannoView={scale:1,tx:0,ty:0}; applyPannoView(); // 縦横が入れ替わるので倍率と位置は戻す
+      pannoPhoto.src=out;         // onload で sizePannoCanvas → redrawPanno
+      if(pannoPhoto.complete&&pannoPhoto.naturalWidth){ sizePannoCanvas(); redrawPanno(); }
+      refreshPannoBtns();
+      const owner=pinOwnerOfPhoto(out);
+      if(owner) pinLog(owner,'rotate',slotLabel(slotForSrc(ledgerDwgId||state.selectedId,owner.id,out)),
+                       dir>0?'右に90°回転':'左に90°回転');
+    });
+  } finally { pannoRotating=false; }
+}
+
 function openPanno(src){
   pannoSrc=src;
   pannoDrawing=null; pannoPolyDraft=null; pannoHoverPt=null;
@@ -5754,7 +6258,7 @@ function closePanno(){
   if(src && hasPhotoInk(src)){
     const did=ledgerDwgId||state.selectedId; // ピンから開いた場合は現在の図面を使う
     const owner=(pins[did]||[]).find(p=>p.photos.includes(src));
-    if(owner) pinLog(owner,'update',slotLabel(slotForSrc(did,owner.id,src)));
+    if(owner) pinLog(owner,'update',slotLabel(slotForSrc(did,owner.id,src)),`書き込み${(photoInk[src]||[]).length}個`);
   }
   renderLedger(); // サムネイルの注釈バッジ・枚数を更新
   renderPhotoGrid(); // ピンの写真グリッドにも注釈を反映（ピン非表示時は早期return）
@@ -6161,6 +6665,8 @@ window.addEventListener('keydown',e=>{ if(e.key==='Shift'&&$('#panno').classList
 window.addEventListener('keyup',e=>{ if(e.key==='Shift'){pannoShiftHeld=false;} });
 
 // アンドゥ・リドゥ・全消去
+$('#pannoRotL').addEventListener('click',()=>rotatePanno(-1));
+$('#pannoRotR').addEventListener('click',()=>rotatePanno(1));
 $('#pannoUndo').addEventListener('click',()=>{
   if(pannoPolyDraft) finishPannoPoly();
   const a=photoInk[pannoSrc]; if(a&&a.length){ (photoInkRedo[pannoSrc]=photoInkRedo[pannoSrc]||[]).push(a.pop()); redrawPanno(); }
@@ -6513,6 +7019,13 @@ $('#pinAppearToggle').addEventListener('click',()=>{ pinAppearOpen=!pinAppearOpe
 $('#pinClose').addEventListener('click',closePin);
 $('#pinTitle').addEventListener('input',e=>{const p=curPinObj();if(p)p.title=e.target.value;});
 $('#pinNote').addEventListener('input',e=>{const p=curPinObj();if(p)p.note=e.target.value;});
+// 入力のたびに記録すると1文字ごとに1行増えるので、欄を離れて確定したときだけ残す
+$('#pinNote').addEventListener('change',e=>{
+  const p=curPinObj(); if(!p) return;
+  const v=(e.target.value||'').trim();
+  pinLog(p,'note','備考', v? (v.length>40? v.slice(0,40)+'…' : v) : '（空にしました）');
+  renderPinLog();
+});
 $('#pinDelete').addEventListener('click',async ()=>{
   const p=curPinObj();if(!p)return;
   const nph=(p.photos||[]).length;
@@ -6594,24 +7107,95 @@ $('#sizeReset').addEventListener('click',()=>{
   renderPins(); renderContext();
 });
 
-// ピンのログ一覧（撮影・更新・削除）。新しい順に表示。
-const LOG_ACTION_LABEL={shoot:'撮影',update:'更新',delete:'削除'};
+/* ピンのログ一覧。新しい順に、日付ごとにまとめて表示する。
+   見出しは開閉ボタンを兼ねる（既定は畳んだ状態。選択は端末に覚えさせる）。 */
+const LOG_ACTION_LABEL={shoot:'撮影',update:'更新',delete:'削除',rotate:'回転',
+  group:'区分',classify:'分類',ledger:'台帳',note:'備考'};
+const PIN_LOG_HEAD=32;      // 最初に出す件数（残りは「さらに表示」で開く）
+const LS_PINLOG='zk_pinlog_open';
+let pinLogOpen=(lsGet(LS_PINLOG)==='1');
+let pinLogShowAll=false;
+
+function logDateKey(d){
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+// 「今日」「昨日」、それ以前は「8月5日(水)」。年をまたいだら年も出す
+function logDateLabel(key,now){
+  const WD=['日','月','火','水','木','金','土'];
+  const [y,m,dd]=key.split('-').map(Number);
+  const d=new Date(y,m-1,dd);
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const diff=Math.round((today-d)/86400000);
+  if(diff===0) return '今日';
+  if(diff===1) return '昨日';
+  const base=`${m}月${dd}日(${WD[d.getDay()]})`;
+  return y===now.getFullYear()? base : `${y}年${base}`;
+}
+// 新しい順のログを日付ごとの塊にする（純粋関数：時刻の扱いを単体で試験できるように分けてある）
+function groupLogByDate(log,now){
+  const out=[];
+  (log||[]).forEach(e=>{
+    const d=new Date(e.time);
+    if(isNaN(d)){ // 時刻が壊れている記録も捨てずに出す
+      const last=out[out.length-1];
+      if(last&&last.key==='?') last.items.push(e); else out.push({key:'?',label:'日時不明',items:[e]});
+      return;
+    }
+    const key=logDateKey(d);
+    const last=out[out.length-1];
+    if(last&&last.key===key) last.items.push(e);
+    else out.push({key,label:logDateLabel(key,now),items:[e]});
+  });
+  return out;
+}
+function logTimeText(e){
+  const d=new Date(e.time);
+  if(isNaN(d)) return '';
+  const p=n=>String(n).padStart(2,'0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function setPinLogOpen(open){
+  pinLogOpen=!!open;
+  lsSet(LS_PINLOG, pinLogOpen?'1':'0');
+  const head=$('#pinLogHead'), body=$('#pinLog');
+  if(head){ head.classList.toggle('open',pinLogOpen); head.setAttribute('aria-expanded',pinLogOpen?'true':'false'); }
+  if(body) body.hidden=!pinLogOpen;
+}
 function renderPinLog(){
   const p=curPinObj(); if(!p) return;
   const el=$('#pinLog'); if(!el) return;
   const log=(p.log||[]).slice().reverse();
-  if(!log.length){ el.innerHTML='<div class="pin-log-empty">まだ記録がありません。写真を撮影・更新・削除すると、ここに時刻が残ります。</div>'; return; }
-  el.innerHTML=log.map(e=>{
-    const d=new Date(e.time);
-    const t=isNaN(d)?'':d.toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
-    return `<div class="pin-log-row ${e.action}">
-      <span class="pin-log-dot"></span>
-      <span class="pin-log-label">${escHtml(e.label)}</span>
-      <span class="pin-log-action">${LOG_ACTION_LABEL[e.action]||e.action}</span>
-      <span class="pin-log-time">${t}</span>
-    </div>`;
-  }).join('');
+  const cnt=$('#pinLogCount'); if(cnt) cnt.textContent=String(log.length);
+  setPinLogOpen(pinLogOpen);
+  if(!pinLogOpen){ el.innerHTML=''; return; }   // 畳んでいる間は中身を作らない（写真が多いピンで軽くなる）
+  if(!log.length){
+    el.innerHTML='<div class="pin-log-empty">まだ記録がありません。写真の撮影・書き込み・回転、区分の変更などが、ここに時刻付きで残ります。</div>';
+    return;
+  }
+  const shown=pinLogShowAll? log : log.slice(0,PIN_LOG_HEAD);
+  const now=new Date();
+  let html=groupLogByDate(shown,now).map(g=>
+    `<div class="pin-log-date">${escHtml(g.label)}</div>`
+    + g.items.map(e=>
+      `<div class="pin-log-row lg-${escAttr(e.action||'')}">
+        <span class="pin-log-dot"></span>
+        <div class="pin-log-main">
+          <div class="pin-log-l1">
+            <span class="pin-log-label">${escHtml(e.label||'')}</span>
+            <span class="pin-log-action">${escHtml(LOG_ACTION_LABEL[e.action]||e.action||'')}</span>
+          </div>
+          ${e.detail?`<div class="pin-log-detail">${escHtml(e.detail)}</div>`:''}
+        </div>
+        <span class="pin-log-time">${logTimeText(e)}</span>
+      </div>`).join('')
+  ).join('');
+  if(!pinLogShowAll && log.length>PIN_LOG_HEAD)
+    html+=`<button class="pin-log-more" id="pinLogMore">残り${log.length-PIN_LOG_HEAD}件を表示</button>`;
+  el.innerHTML=html;
+  const more=$('#pinLogMore');
+  if(more) more.addEventListener('click',()=>{ pinLogShowAll=true; renderPinLog(); });
 }
+$('#pinLogHead').addEventListener('click',()=>{ pinLogShowAll=false; setPinLogOpen(!pinLogOpen); renderPinLog(); });
 // ピンシートの写真欄：台帳で先に作った「撮影枠」もここに反映し、未撮影ならその場で撮れるようにする
 // （撮り忘れ防止という趣旨上、台帳へ切り替えずに現場画面から完結できることが重要）。
 let pinSlotTarget=null; // ピンシートの「この枠を撮影」で開いたファイル選択の対象枠
@@ -6647,9 +7231,19 @@ function renderPhotoGrid(){
   };
   let html='';
   if(!groups.length) html+=`<div class="pg-hint">「区分を追加」で分類（例：調査／工事前／工事後）を作り、写真を長押しして区分へドラッグできます。</div>`;
+  const UP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>';
+  const DN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
   const section=(title,gid,cells)=>{
     html+=`<div class="pg-section" data-gid="${gid||''}"><div class="pg-head"><span class="pg-name">${escHtml(title)}</span><span class="pg-tools">`;
-    if(gid){ html+=`<button class="pg-mini" data-gren="${gid}">改名</button><button class="pg-mini" data-gdel="${gid}">削除</button>`; }
+    if(gid){
+      // 区分が1つだけなら並べ替えようがないので出さない（「未分類」は常に最後で並べ替え対象外）
+      const gi=groups.findIndex(x=>x.id===gid);
+      if(groups.length>1){
+        html+=`<button class="pg-mini pg-move" data-gup="${gid}" ${gi<=0?'disabled':''} title="この区分を上へ">${UP}</button>`
+             +`<button class="pg-mini pg-move" data-gdn="${gid}" ${gi>=groups.length-1?'disabled':''} title="この区分を下へ">${DN}</button>`;
+      }
+      html+=`<button class="pg-mini" data-gren="${gid}">改名</button><button class="pg-mini" data-gdel="${gid}">削除</button>`;
+    }
     html+=`<button class="pg-add" data-gadd="${gid||''}">＋写真</button></span></div><div class="photo-grid">${cells||'<div class="pg-empty">写真なし</div>'}</div></div>`;
   };
   groups.forEach(gp=>section(gp.name,gp.id,bucket[gp.id].map(cell).join('')));
@@ -6666,13 +7260,36 @@ function renderPhotoGrid(){
       setPhotoOff(p,src,off);
       const item=cb.closest('.photo-item');
       if(item) item.classList.toggle('led-off',off);       // 並びは変わらないので再描画しない
+      pinLog(p,'ledger',slotLabel(slotForSrc(state.selectedId,p.id,src)), off?'写真台帳に載せない':'写真台帳に載せる');
       toast(off?'この写真は写真台帳に載せません':'この写真を写真台帳に載せます', off?'warn':'ok');
     });
   });
-  g.querySelectorAll('.photo-gsel').forEach(sel=>{ sel.addEventListener('click',e=>e.stopPropagation()); sel.addEventListener('change',e=>{ e.stopPropagation(); setPhotoGid(p,sel.dataset.src,sel.value||null); renderPhotoGrid(); }); });
+  g.querySelectorAll('.photo-gsel').forEach(sel=>{ sel.addEventListener('click',e=>e.stopPropagation()); sel.addEventListener('change',e=>{
+    e.stopPropagation();
+    const src=sel.dataset.src;
+    const nameOf=gid=>{ const x=(p.groups||[]).find(y=>y.id===gid); return x?x.name:'未分類'; };
+    const from=nameOf(photoGid(p,src)), to=nameOf(sel.value||null);
+    setPhotoGid(p,src,sel.value||null);
+    if(from!==to) pinLog(p,'classify',slotLabel(slotForSrc(state.selectedId,p.id,src)),`${from} → ${to}`);
+    renderPhotoGrid(); }); });
   g.querySelectorAll('[data-gadd]').forEach(b=>b.addEventListener('click',()=>{ pinPhotoTargetGid=b.dataset.gadd||null; $('#photoInput').click(); }));
-  g.querySelectorAll('[data-gren]').forEach(b=>b.addEventListener('click',()=>{ const gp=groups.find(x=>x.id===b.dataset.gren); if(!gp)return; const n=prompt('区分の名前',gp.name); if(n&&n.trim()){ gp.name=n.trim(); renderPhotoGrid(); } }));
-  g.querySelectorAll('[data-gdel]').forEach(b=>b.addEventListener('click',async()=>{ const gp=groups.find(x=>x.id===b.dataset.gdel); if(!gp)return; const ok=await gConfirm({title:`区分「${gp.name}」を削除しますか？`,desc:'この区分の写真は「未分類」に移動します（写真自体は消えません）。',ok:'削除',danger:true}); if(!ok)return; (p.photos||[]).forEach(src=>{ if(photoGid(p,src)===gp.id) setPhotoGid(p,src,null); }); p.groups=groups.filter(x=>x.id!==gp.id); renderPhotoGrid(); }));
+  // 並べ替え。再描画で押したボタン自体が動くので、移動先の区分を画面内に引き戻す。
+  const moveGroup=(gid,dir)=>{
+    const gp=(p.groups||[]).find(x=>x.id===gid);
+    if(!moveGroupInList(p.groups,gid,dir)) return;
+    pinLog(p,'group','区分',`「${gp?gp.name:''}」を${dir<0?'上':'下'}へ移動（台帳の並び順が変わります）`);
+    renderPhotoGrid();
+    const sec=$('#photoGrid').querySelector(`.pg-section[data-gid="${gid}"]`);
+    if(sec) try{ sec.scrollIntoView({block:'nearest'}); }catch(_){ }
+  };
+  g.querySelectorAll('[data-gup]').forEach(b=>b.addEventListener('click',()=>moveGroup(b.dataset.gup,-1)));
+  g.querySelectorAll('[data-gdn]').forEach(b=>b.addEventListener('click',()=>moveGroup(b.dataset.gdn,1)));
+  g.querySelectorAll('[data-gren]').forEach(b=>b.addEventListener('click',()=>{ const gp=groups.find(x=>x.id===b.dataset.gren); if(!gp)return; const n=prompt('区分の名前',gp.name);
+    if(n&&n.trim()&&n.trim()!==gp.name){ const old=gp.name; gp.name=n.trim(); pinLog(p,'group','区分',`「${old}」を「${gp.name}」に改名`); renderPhotoGrid(); } }));
+  g.querySelectorAll('[data-gdel]').forEach(b=>b.addEventListener('click',async()=>{ const gp=groups.find(x=>x.id===b.dataset.gdel); if(!gp)return; const ok=await gConfirm({title:`区分「${gp.name}」を削除しますか？`,desc:'この区分の写真は「未分類」に移動します（写真自体は消えません）。',ok:'削除',danger:true}); if(!ok)return; const moved=(p.photos||[]).filter(src=>photoGid(p,src)===gp.id);
+    moved.forEach(src=>setPhotoGid(p,src,null)); p.groups=groups.filter(x=>x.id!==gp.id);
+    pinLog(p,'group','区分',`「${gp.name}」を削除${moved.length?`（写真${moved.length}枚は未分類へ）`:''}`);
+    renderPhotoGrid(); }));
   g.querySelectorAll('.rm').forEach(b=>b.addEventListener('click',async e=>{
     e.stopPropagation();
     const ok=await gConfirm({title:'写真を削除しますか？',desc:'この写真を台帳から削除します。<br>撮影枠は残り「未撮影」に戻ります。',ok:'削除',danger:true});
@@ -6691,7 +7308,7 @@ function renderPhotoGrid(){
     $('#pinSlotPhotoInput').click();
   }));
 }
-$('#btnAddPhoto').addEventListener('click',()=>{ const p=curPinObj(); if(!p)return; const n=prompt('区分の名前を入力（例：調査／工事前／工事後）',''); if(n&&n.trim()){ (p.groups=p.groups||[]).push({id:newGid(),name:n.trim()}); renderPhotoGrid(); } });
+$('#btnAddPhoto').addEventListener('click',()=>{ const p=curPinObj(); if(!p)return; const n=prompt('区分の名前を入力（例：調査／工事前／工事後）',''); if(n&&n.trim()){ (p.groups=p.groups||[]).push({id:newGid(),name:n.trim()}); pinLog(p,'group','区分',`「${n.trim()}」を追加`); renderPhotoGrid(); } });
 
 // ==== 写真を長押しドラッグで区分へ移動（iPadタッチ対応の独自D&D）====
 let pdrag=null, lastPhotoDragEnd=0;
@@ -6909,7 +7526,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v7.93';
+const APP_BUILD='v7.98';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの

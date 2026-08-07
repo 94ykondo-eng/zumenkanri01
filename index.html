@@ -1252,6 +1252,20 @@
        あわせて .pin:active の scale(.9) を外した。transform の中で scale すると translate の後に
        掛かるため先端が (-2.1,-4.2)px 動く（v8.1以前からある挙動で、:active が発火する環境でだけ
        起きていた）。押した反応は .pressing が担うので、:active 側は位置決めだけにする。
+  build v8.2 (写真台帳で区分の並べ替えと「載せる/載せない」)  —
+       [区分の並べ替え] v7.95 でピンの写真画面に入れたものを台帳画面にも。同じ moveGroupInList を
+       使うので、どちらから触っても同じ並び＝PDF・Excel の出力順が変わる。
+       [載せる/載せない] 写真1枚ごとと、区分まるごとの2段階。区分まるごとは「1枚でも載せているなら
+       全部やめる／全部やめているなら全部載せる」。区分の状態は写真から導くので、持つデータは
+       従来どおり pin.photoOff だけ（新しい保存項目を増やしていない）。
+       [載せない写真を台帳画面に残す] これが今回いちばん大きい変更。従来は載せない写真を台帳画面から
+       消していたが、それだと外した瞬間に消えてこの画面から戻せない。薄く白黒にして残し、
+       ボタンで戻せるようにした。PDF・Excel に出ないことは従来どおり（ledgerCells は変更なし）。
+       [数え方の見直し] 載せない写真を「未撮影」に数えていたが、画面に残るようになったので辻褄が
+       合わない。撮影済＝撮ったかどうか、載せない＝出力に出すかどうか、と分けて数え、
+       上部に「載せない n」を別に出す。
+       [再描画] 切り替えのたびに作り直すが、#ledgerBody の scrollTop を保存・復元する。
+       長い一覧で先頭へ飛ぶと、どこを触っていたか分からなくなるため。
 -->
 <html lang="ja">
 <head>
@@ -2202,6 +2216,24 @@
   .lgrp-head{grid-column:1/-1;display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700;color:var(--text);
     border-bottom:1px solid var(--line2);padding:2px 0 8px;margin-top:8px}
   .lgrp-cnt{font-size:12px;font-weight:600;color:var(--muted);background:var(--panel2);border-radius:20px;padding:1px 10px}
+  .lgrp-head .sp{flex:1}
+  /* 区分の並べ替え。端では薄くして当たり判定だけ切る（位置が動くと押し間違えるため） */
+  .lgrp-mini{width:32px;height:30px;flex-shrink:0;border-radius:7px;background:var(--panel2);border:1px solid var(--line2);
+    color:var(--muted);display:flex;align-items:center;justify-content:center}
+  .lgrp-mini svg{width:15px;height:15px;display:block;pointer-events:none}
+  .lgrp-mini[disabled]{opacity:.28;pointer-events:none}
+  /* 区分まるごとの「載せる/載せない」 */
+  .lgrp-off{flex-shrink:0;font-size:11.5px;font-weight:600;padding:6px 11px;border-radius:7px;
+    background:var(--panel2);border:1px solid var(--line2);color:var(--muted)}
+  .lgrp-off.off{background:rgba(240,68,56,.12);border-color:rgba(240,68,56,.45);color:#FF8A7F}
+  .lgrp-off[disabled]{opacity:.35;pointer-events:none}
+  /* 載せない写真は台帳画面には残す（消すとこの画面から戻せない）。出力には出さない。 */
+  .lphoto.led-off .lphoto-imgwrap{opacity:.45;filter:grayscale(.55)}
+  .lphoto.led-off .lphoto-body>*:not(.lphoto-led){opacity:.5}
+  .lphoto-led{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;padding:8px;border-radius:8px;
+    font-size:12px;font-weight:700;background:var(--panel3);border:1px solid var(--line2);color:var(--text)}
+  .lphoto-led.off{background:rgba(240,68,56,.12);border-color:rgba(240,68,56,.45);color:#FF8A7F}
+  .lphoto-led svg{width:15px;height:15px;flex-shrink:0;pointer-events:none}
   .lgrp-photos{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
   .lphoto{background:var(--panel2);border:1px solid var(--line);border-radius:11px;overflow:hidden}
   .lphoto-imgwrap{position:relative}
@@ -2337,7 +2369,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="押したときの反応を全ボタンに">build v8.1</button>
+          data-desc="写真台帳で区分の並べ替えと「載せる/載せない」">build v8.2</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -3314,15 +3346,29 @@ function unplannedPhotos(dwgId,p){
 }
 // 図面単位の進捗（撮影済 / 計画）。枠のない写真も「計画1・撮影済1」として数える。
 function ledgerProgress(dwgId){
-  let done=0,total=0;
+  // 撮影済＝撮ったかどうか。「載せない」は出力に出すかどうかの話なので、別に数える。
+  // （v8.2以前は載せない写真を未撮影に数えていたが、台帳画面に残すようにしたので辻褄が合わなくなった）
+  let done=0,total=0,off=0;
   (pins[dwgId]||[]).forEach(p=>{
     const slots=planArr(dwgId,p.id);
-    // 「台帳に載せない」写真は撮影済に数えない（枠は残るので未撮影として見える）
-    total+=slots.length; done+=slots.filter(s=>s.src&&!photoOff(p,s.src)).length;
-    const extra=unplannedPhotos(dwgId,p).filter(src=>!photoOff(p,src)).length;
-    total+=extra; done+=extra;
+    total+=slots.length;
+    done+=slots.filter(s=>s.src).length;
+    off+=slots.filter(s=>s.src&&photoOff(p,s.src)).length;
+    const extra=unplannedPhotos(dwgId,p);
+    total+=extra.length; done+=extra.length;
+    off+=extra.filter(src=>photoOff(p,src)).length;
   });
-  return {done,total,short:total-done};
+  return {done,total,short:total-done,off};
+}
+// 区分（gid=null は未分類）に属する、この図面の写真src一覧
+function groupPhotoSrcs(p,gid){
+  const gs=pinGroups(p);
+  const all=(planArr(ledgerDwgId,p.id).filter(sl=>sl.src).map(sl=>sl.src))
+    .concat(unplannedPhotos(ledgerDwgId,p));
+  return all.filter(src=>{
+    const g=photoGid(p,src);
+    return gid ? g===gid : (!g || !gs.find(x=>x.id===g));
+  });
 }
 // 写真を枠に割り当て（枠に書いておいた計画を写真メタへ引き継ぐ）
 function bindPhotoToSlot(dwgId,pinId,sid,src){
@@ -4624,6 +4670,7 @@ function renderLedger(){
   const prEl=$('#ledgerProg');
   prEl.innerHTML = pr.total
     ? `撮影済 <b>${pr.done}</b> / 計画 <b>${pr.total}</b>${pr.short?` <span class="lp-short">未撮影 ${pr.short}</span>`:' <span class="lp-done">完了</span>'}`
+      + (pr.off?` <span class="lp-short">載せない ${pr.off}</span>`:'')
     : '';
   const pinsArr=pins[ledgerDwgId]||[];
   const body=$('#ledgerBody');
@@ -4640,15 +4687,17 @@ function renderLedger(){
     const title=p.title||`ピン P${pi+1}`;
     const lgroups=pinGroups(p);
     const slots=planArr(ledgerDwgId,p.id);
-    const extra=unplannedPhotos(ledgerDwgId,p).filter(src=>!photoOff(p,src)); // 除外写真は台帳に出さない
-    const done=slots.filter(s=>s.src&&!photoOff(p,s.src)).length+extra.length;
+    // 載せない写真も台帳画面には出す（消すとこの画面から戻せないため）。出力には出さない。
+    const extra=unplannedPhotos(ledgerDwgId,p);
+    const done=slots.filter(s=>s.src).length+extra.length;
     const total=slots.length+extra.length;
     const shortN=total-done;
+    const offN=slots.filter(s=>s.src&&photoOff(p,s.src)).length+extra.filter(src=>photoOff(p,src)).length;
     html+=`<div class="lsec" data-pin="${p.id}">
       <div class="lsec-head">
         <span class="lsec-dot" style="background:${pc}"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">${ic}</svg></span>
         <span class="lsec-title">${escHtml(title)}</span>
-        <span class="lsec-cnt ${shortN?'short':''}">${total?`${done} / ${total}`:'枠なし'}${shortN?`　未撮影 ${shortN}`:''}</span>
+        <span class="lsec-cnt ${shortN?'short':''}">${total?`${done} / ${total}`:'枠なし'}${shortN?`　未撮影 ${shortN}`:''}${offN?`　載せない ${offN}`:''}</span>
       </div>
       <div class="lsec-meta">
         <span class="lmeta-lbl">区分</span>
@@ -4671,27 +4720,42 @@ function renderLedger(){
       <div class="lphotos">`;
     // ピン内を区分ごとに小分け（区分が無ければ従来どおりフラット）
     if(lgroups.length){
-      const items=[]; slots.forEach((sl,si)=>{ if(sl.src&&!photoOff(p,sl.src)) items.push({src:sl.src,slot:sl,no:si+1}); });
+      const items=[]; slots.forEach((sl,si)=>{ if(sl.src) items.push({src:sl.src,slot:sl,no:si+1}); });
       extra.forEach(src=>items.push({src,slot:null,no:0}));
-      // 除外された写真の枠は「未撮影」として残す（撮り直しが必要だと分かるように）
-      const emptyItems=[]; slots.forEach((sl,si)=>{ if(!sl.src||photoOff(p,sl.src)) emptyItems.push({sl,no:si+1}); });
-      lgroups.forEach(gp=>{
+      const emptyItems=[]; slots.forEach((sl,si)=>{ if(!sl.src) emptyItems.push({sl,no:si+1}); });
+      const UP2='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>';
+      const DN2='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+      // 区分まるごとの切替は「1枚でも載せているなら全部やめる／全部やめているなら全部載せる」
+      const offBtn=(gid,srcs)=>{
+        const on=srcs.filter(src=>!photoOff(p,src)).length;
+        const allOff=srcs.length>0&&on===0;
+        return `<button class="lgrp-off ${allOff?'off':''}" data-goff="${gid||''}" data-pin="${p.id}" ${srcs.length?'':'disabled'}
+          title="${allOff?'この区分の写真をまとめて載せる':'この区分の写真をまとめて載せない'}">${allOff?'まとめて載せる':'まとめて載せない'}</button>`;
+      };
+      lgroups.forEach((gp,gi)=>{
         const its=items.filter(it=>photoGid(p,it.src)===gp.id);
-        html+=`<div class="lgrp-head"><span class="lgrp-name">${escHtml(gp.name)}</span><span class="lgrp-cnt">${its.length}</span></div><div class="lgrp-photos">`;
-        its.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no));
+        const srcs=its.map(it=>it.src);
+        html+=`<div class="lgrp-head"><span class="lgrp-name">${escHtml(gp.name)}</span><span class="lgrp-cnt">${its.length}</span><span class="sp"></span>`;
+        if(lgroups.length>1){
+          html+=`<button class="lgrp-mini" data-gup2="${gp.id}" data-pin="${p.id}" ${gi<=0?'disabled':''} title="この区分を上へ">${UP2}</button>`
+               +`<button class="lgrp-mini" data-gdn2="${gp.id}" data-pin="${p.id}" ${gi>=lgroups.length-1?'disabled':''} title="この区分を下へ">${DN2}</button>`;
+        }
+        html+=offBtn(gp.id,srcs)+`</div><div class="lgrp-photos">`;
+        its.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no,p));
         if(!its.length) html+=`<div class="lphoto-none">この区分の写真はまだありません。</div>`;
         html+=`</div>`;
       });
       const un=items.filter(it=>{ const gid=photoGid(p,it.src); return !gid||!lgroups.find(g=>g.id===gid); });
       if(un.length||emptyItems.length){
-        html+=`<div class="lgrp-head"><span class="lgrp-name">未分類</span><span class="lgrp-cnt">${un.length}</span></div><div class="lgrp-photos">`;
-        un.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no));
+        html+=`<div class="lgrp-head"><span class="lgrp-name">未分類</span><span class="lgrp-cnt">${un.length}</span><span class="sp"></span>`
+             +offBtn(null,un.map(it=>it.src))+`</div><div class="lgrp-photos">`;   // 未分類は常に最後なので並べ替えは無し
+        un.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no,p));
         emptyItems.forEach(it=>html+=emptyCellHtml(it.sl,p.id,it.no));
         html+=`</div>`;
       }
     } else {
-      slots.forEach((sl,si)=>{ html += (sl.src&&!photoOff(p,sl.src)) ? photoCellHtml(sl.src, sl, si+1) : emptyCellHtml(sl, p.id, si+1); });
-      extra.forEach(src=>{ html += photoCellHtml(src, null, 0); });
+      slots.forEach((sl,si)=>{ html += sl.src ? photoCellHtml(sl.src, sl, si+1, p) : emptyCellHtml(sl, p.id, si+1); });
+      extra.forEach(src=>{ html += photoCellHtml(src, null, 0, p); });
     }
     if(!total) html+=`<div class="lphoto-none">枠も写真もありません。上のボタンで枠を用意するか、図面のピンから写真を追加してください。</div>`;
     html+=`</div></div>`;
@@ -4701,20 +4765,25 @@ function renderLedger(){
 }
 
 // 撮影済みのセル（従来の写真セル。枠から撮った場合は「枠 n」チップを付ける）
-function photoCellHtml(src, slot, no){
+function photoCellHtml(src, slot, no, pin){
   const meta=photoMeta(src);
+  const off=pin?photoOff(pin,src):false;
+  const CHK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+  const NG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+  const ledBtn=pin?`<button class="lphoto-led ${off?'off':''}" data-ledtoggle="${escAttr(src)}" data-pin="${pin.id}">${off?NG:CHK}${off?'台帳に載せない':'台帳に載せる'}</button>`:'';
   const linesHtml=meta.lines.map((ln,li)=>`
     <div class="lphoto-line">
       <input type="text" data-src="${escAttr(src)}" data-li="${li}" value="${escAttr(ln)}" placeholder="記入（使用部材・数量・施工内容など）">
       <button class="lphoto-line-rm" data-src="${escAttr(src)}" data-li="${li}" title="この行を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
     </div>`).join('');
-  return `<div class="lphoto">
+  return `<div class="lphoto${off?' led-off':''}">
     <div class="lphoto-imgwrap">
       <img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" alt="現場写真">
       ${slot?`<span class="lphoto-tag done">枠 ${no}・撮影済</span>`:''}
       <button class="lphoto-anno ${hasPhotoInk(src)?'has':''}" data-src="${escAttr(src)}" title="写真に書き込み"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
     </div>
     <div class="lphoto-body">
+      ${ledBtn}
       <div class="lphoto-date">登録日：${meta.regDate}</div>
       <div class="lphoto-place"><label>内容</label>${slot
         ? `<input type="text" data-slotname="${slot.id}" value="${escAttr(slot.name)}" placeholder="例：外壁北面">`
@@ -4863,6 +4932,43 @@ function bindLedger(){
     const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.gadd2); if(!p) return;
     const n=prompt('区分の名前を入力（例：調査／工事前／工事後）','');
     if(n&&n.trim()){ (p.groups=p.groups||[]).push({id:newGid(),name:n.trim()}); pinLog(p,'group','区分',`「${n.trim()}」を追加`); renderLedger(); }
+  }));
+  // 台帳の中身を作り直しつつ、見ていた位置を保つ（長い一覧で先頭へ飛ぶと使いづらい）
+  const rerenderLedger=()=>{
+    const y=body.scrollTop;
+    renderLedger();
+    const nb=$('#ledgerBody'); if(nb) nb.scrollTop=y;
+  };
+  // 区分の並べ替え（ピンの写真画面と同じ moveGroupInList。台帳・PDF・Excel の出力順が変わる）
+  const moveG=(pinId,gid,dir)=>{
+    const p=(pins[ledgerDwgId]||[]).find(x=>x.id===pinId); if(!p) return;
+    const gp=(p.groups||[]).find(x=>x.id===gid);
+    if(!moveGroupInList(p.groups,gid,dir)) return;
+    pinLog(p,'group','区分',`「${gp?gp.name:''}」を${dir<0?'上':'下'}へ移動（台帳の並び順が変わります）`);
+    rerenderLedger(); renderPhotoGrid(); renderPinLog();
+  };
+  body.querySelectorAll('[data-gup2]').forEach(b=>b.addEventListener('click',()=>moveG(b.dataset.pin,b.dataset.gup2,-1)));
+  body.querySelectorAll('[data-gdn2]').forEach(b=>b.addEventListener('click',()=>moveG(b.dataset.pin,b.dataset.gdn2,1)));
+  // 区分まるごとの「載せる/載せない」
+  body.querySelectorAll('[data-goff]').forEach(b=>b.addEventListener('click',()=>{
+    const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.pin); if(!p) return;
+    const gid=b.dataset.goff||null;
+    const srcs=groupPhotoSrcs(p,gid);
+    if(!srcs.length) return;
+    const allOff=srcs.every(src=>photoOff(p,src));
+    const next=!allOff;                                   // 1枚でも載せていれば「全部やめる」
+    srcs.forEach(src=>setPhotoOff(p,src,next));
+    const gname=gid?((p.groups||[]).find(x=>x.id===gid)||{}).name||'区分':'未分類';
+    pinLog(p,'ledger','区分',`「${gname}」の写真${srcs.length}枚を${next?'台帳に載せない':'台帳に載せる'}`);
+    rerenderLedger(); renderPhotoGrid(); renderPinLog();
+  }));
+  // 写真1枚ごとの「載せる/載せない」
+  body.querySelectorAll('[data-ledtoggle]').forEach(b=>b.addEventListener('click',()=>{
+    const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.pin); if(!p) return;
+    const src=b.dataset.ledtoggle, next=!photoOff(p,src);
+    setPhotoOff(p,src,next);
+    pinLog(p,'ledger',photoName(p,src,ledgerDwgId), next?'写真台帳に載せない':'写真台帳に載せる');
+    rerenderLedger(); renderPhotoGrid(); renderPinLog();
   }));
   body.querySelectorAll('[data-gren2]').forEach(b=>b.addEventListener('click',()=>{
     const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.pin); if(!p) return;
@@ -7686,7 +7792,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v8.1';
+const APP_BUILD='v8.2';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの

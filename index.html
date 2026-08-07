@@ -1207,6 +1207,51 @@
        左に履歴アイコン、右に「開く／閉じる」の文字と山形の記号を置く。記号だけだと何が起きるか
        伝わらないため、状態を文字でも出す（開いているときは「閉じる」）。開いている間は地色を
        一段明るくして、閉じているときとの違いを分かるようにした。
+  build v8.0 (写真に名前を付けて、ログがどの写真を指すか分かるように)  —
+       [問題] ログのラベルは slotLabel() で、枠名の無い写真はすべて「写真」になっていた。
+       撮影・回転・分類の記録が並んでも、どれがどの写真の話なのか区別できなかった。
+       [名前の決め方] photoName() を新設し 枠名 → 内容(meta.name) → 「写真N」の順で決める。
+       N はピンごとの通し番号で ledgerPhotoMeta[src].no に持つ。ここに置く理由は2つ：
+       ①remapPhotoSrc() が ledgerPhotoMeta を移すので写真を回しても番号が変わらない
+       ②配列の位置と切り離せる＝1枚消しても他の写真の名前がずれない。
+       一度使った番号は再利用しない。使った番号はピン自身(p.photoSeq)が覚える。今ある写真から
+       数え直す作りだと、写真を全部消してから1枚足したときに番号が1へ戻り、ログに残った
+       「写真1」が別の写真を指し始める（単体試験で発覚。p.photoSeq はピンに載るので保存・復元・
+       版スナップショットにもそのまま乗る）。
+       [突き合わせ] 写真グリッドの各サムネイルに必ず名前を出す。ログに出る名前と画面の名前が
+       同じなので、「写真3を回転」と書いてあれば画面でその写真を指せる。名前が常に出るように
+       なったことで右下の書き込みボタン(.photo-anno)と重なったため、名前の右端を40px空けた
+       （以前は枠名のある写真にしか出ていなかったので表に出ていなかった）。さらに、サムネイルが
+       小さいと重ねた名前が1行で切れて読めない（「分電盤まわりの結線」→「分…」）ため、最終的に
+       写真の下の独立した行（.photo-name・2行まで表示）に置いた。読めない名前は突き合わせに使えない。
+       [名前を変える] サムネイルの名前をタップすると変更できる。枠のある写真は枠名を、
+       無い写真は「内容」を書き換える（画面に出ている方を直す）。変更もログに残す（種別=名前）。
+       [写真台帳には自動の番号を出さない] ledgerCells() は従来どおり 枠名/内容 が空なら空のまま。
+       「写真1」「写真2」がPDF・Excelの「内容」欄に並ぶのは意図と違うため。画面とログの中だけで使う。
+  build v8.1 (押したときの反応を全ボタンに)  —
+       [なぜ無反応に見えるか] ①-webkit-tap-highlight-color:transparent でiOS標準のタップ表示を
+       消してある ②代わりの :active は133+46個のボタンに対して59クラスにしか付いていない
+       ③そもそも iOS Safari の :active は、スクロールできる領域の中だと発火しないことがある。
+       ③が主因で、同じボタンでも反応したりしなかったりする。
+       [直し方] :active に頼らず、pointerdown/pointerup で .pressing を付け外しする。
+       指が10px以上動いたら外す（スクロールやドラッグの途中で押しっぱなしに見せない）。
+       pointerup を取りこぼしても1.5秒で自動的に外す（押した拍子に再描画で要素が消える経路がある）。
+       [見た目] 沈み込み＋明るく＋緑の輪郭。使うのは scale / filter / outline の3つで、
+       transform と box-shadow には触らない。transform は .pin が位置決めに使っており
+       （translate(-50%,-100%)）上書きするとピンがずれる。CSSのscaleプロパティはtransformとは
+       別枠で合成されるので位置を壊さない。box-shadow は .dock-btn.on など「今この状態です」の
+       表現に使われており、押している間それが消えるとかえって分かりにくい。
+       [対象] button 要素すべてと、ボタンではないタップ対象（図面リストの行・版の行）。
+       完了の通知は増やしていない（v7.82でヒントトーストを全廃した方針のまま）。
+       [ピンの基点] ピンは transform:translate(-50%,-100%) で「先端＝図面上の位置」に置いてある。
+       既定の基点（要素の中心）で縮めると先端が2.5px浮いたため、transform-origin を先端（下端中央）
+       にしたが、これでも2.52pxずれた。CSSのscaleは transform プロパティの「後」に合成されるため、
+       scaleの時点でピンは既に translate された後の位置にいる。動かないのは要素の原点なので
+       transform-origin:0 0 が正解（実測：0 0 → ずれ0.00px／下端中央 → 2.52px／中心 → 1.26px）。
+       translate は transform-origin の影響を受けないので位置決めそのものは変わらない。
+       あわせて .pin:active の scale(.9) を外した。transform の中で scale すると translate の後に
+       掛かるため先端が (-2.1,-4.2)px 動く（v8.1以前からある挙動で、:active が発火する環境でだけ
+       起きていた）。押した反応は .pressing が担うので、:active 側は位置決めだけにする。
 -->
 <html lang="ja">
 <head>
@@ -1253,7 +1298,23 @@
   }
   /* editable fields must stay selectable/typable — iOS Safari blocks input when it inherits user-select:none */
   input,textarea,select{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
-  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;touch-action:manipulation}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;touch-action:manipulation;
+    transition:scale .07s ease, filter .07s ease}
+  /* 押している間の反応。iOS Safari の :active はスクロールできる領域の中だと発火しないことがあり、
+     「押したのに無反応」に見える。JS が pointerdown/pointerup で .pressing を付け外しする。 */
+  .pressing{
+    scale:.94;                                  /* transform とは別枠なので位置決めを壊さない */
+    filter:brightness(1.35);
+    outline:2px solid rgba(34,196,138,.75);     /* box-shadow は状態表示に使われているので触らない */
+    outline-offset:1px;
+  }
+  /* 沈み込みが目立ちすぎる大きな面には、明るさと輪郭だけ返す */
+  .pin-del.pressing,.pin-log-head.pressing,.drive-save-btn.pressing,.ledger-btn.pressing{scale:.985}
+  /* ピンは先端が図面上の位置を指す。押して縮むときに先端が動かない基点は「要素の原点(0 0)」。
+     CSSのscaleは transform プロパティの後に合成されるため、scaleの時点でピンは既に
+     translate(-50%,-100%) された後にいる。実測：0 0 → ずれ0.00px／下端中央 → 2.52px／中心 → 1.26px。
+     translate は transform-origin の影響を受けないので、位置決めそのものは変わらない。 */
+  .pin{transform-origin:0 0}
   .mono{font-family:var(--mono)}
 
   /* ---------------- TOP BAR ---------------- */
@@ -1599,7 +1660,9 @@
   .pin-layer.pins-off .pin{pointer-events:none}
   .pin{position:absolute;pointer-events:auto;transform:translate(-50%,-100%);
     display:flex;flex-direction:column;align-items:center;border:none;background:none;padding:0;transition:transform .06s}
-  .pin:active{transform:translate(-50%,-100%) scale(.9)}
+  /* 押した反応は .pressing が担う（先端が動かない）。ここで scale すると transform の中＝
+     translate の後に掛かるため、先端が (-2.1,-4.2)px 動いてしまう。位置決めだけ残す。 */
+  .pin:active{transform:translate(-50%,-100%)}
   /* 0deg = tip pointing straight down (standard). The whole pin rotates AND resizes rigidly
      around its TIP (the exact marked spot), so it turns/grows while its point stays on target. */
   .pin .swing{display:flex;flex-direction:column;align-items:center;position:relative;
@@ -1753,10 +1816,20 @@
   .photo-cell-ph span{font-size:10.5px;font-weight:700;letter-spacing:.4px;line-height:1.2}
   .photo-cell-status{font-size:9px;font-weight:700;color:#fff;background:rgba(59,130,246,.55);
     border-radius:5px;padding:2px 6px;letter-spacing:.2px;line-height:1.3}
+  /* 名前は全ての写真に出る（ログと突き合わせるため）。タップで変更できることが分かるよう、
+     押したときに手応えを返す。写真そのもののタップ（拡大）は stopPropagation で分けている。 */
   .photo-slot-tag{position:absolute;left:6px;bottom:6px;right:6px;font-size:10.5px;font-weight:700;color:#fff;
     background:rgba(10,14,20,.72);border-radius:6px;padding:3px 7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+  /* 写真の名前。ログに出るものと同じなので、切れずに読めることを優先して写真の下に置く。
+     サムネイルに重ねると幅が足りず「分電盤まわりの結線」が「分…」になってしまう。 */
+  .photo-name{width:100%;margin-top:5px;padding:4px 6px;border-radius:7px;text-align:left;
+    background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    font-size:11px;font-weight:600;line-height:1.3;
+    min-height:38px;  /* 常に2行ぶん確保して、下のチェックボックスの位置をタイル間で揃える */
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .photo-name:active{transform:scale(.97);border-color:var(--signal)}
   .photo-cell.empty .photo-slot-tag{position:static;margin:0;color:var(--muted);background:transparent;
-    font-size:10.5px;line-height:1.2;max-width:100%}
+    font-size:10.5px;line-height:1.2;max-width:100%;border:none}
   .photo-empty{grid-column:1/-1;text-align:center;color:var(--muted2);font-size:12.5px;padding:18px;line-height:1.6;border:1px dashed var(--line2);border-radius:12px}
   /* ログの見出し＝開閉ボタン。押しても見出しの位置は動かず、下の中身だけ伸縮する */
   /* 押せるものだと一目で分かるよう、枠と地色のあるボタンにする（.ph-btn/.pin-del と同じ流儀）。
@@ -1797,6 +1870,7 @@
   .pin-log-row.lg-classify .pin-log-dot{background:#22C48A}
   .pin-log-row.lg-ledger .pin-log-dot{background:#7A8794}
   .pin-log-row.lg-note .pin-log-dot{background:#7A8794}
+  .pin-log-row.lg-name .pin-log-dot{background:#3BA6FF}
   .pin-log-label{flex:1;min-width:0;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pin-log-action{flex-shrink:0;font-size:11px;color:var(--muted2);font-family:var(--mono)}
   .pin-log-time{flex-shrink:0;font-size:11px;color:var(--muted2);font-family:var(--mono);margin-top:1px}
@@ -2263,7 +2337,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="収納したログの見出しをボタンと分かる形に">build v7.99</button>
+          data-desc="押したときの反応を全ボタンに">build v8.1</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -3199,6 +3273,35 @@ function slotForSrc(dwgId,pinId,src){
   return arr.find(s=>s.src===src)||null;
 }
 function slotLabel(sl){ return (sl && sl.name) ? sl.name : '写真'; }
+/* 写真の名前。ログの「配管検査」「写真3」がどれを指すのか分かるようにするためのもの。
+   決め方は 枠名 → 内容(meta.name) → 「写真N」の順。
+   N はピンごとの通し番号で ledgerPhotoMeta[src].no に持つ。ここに置く理由は2つ：
+     ①remapPhotoSrc() が ledgerPhotoMeta を移すので、写真を回しても番号が変わらない
+     ②写真の並び順（配列の位置）と切り離せる＝1枚消しても他の写真の名前がずれない
+   一度使った番号は再利用しない（消した写真の名前が別の写真に付くと、ログが嘘になる）。 */
+function ensurePhotoNos(p){
+  if(!p||!p.photos) return;
+  // 使った番号はピンに覚えておく（p.photoSeq）。今ある写真から数え直すと、全部消したときに
+  // 1番へ戻り、ログに残った「写真1」が別の写真を指し始める。
+  let mx=p.photoSeq||0;
+  p.photos.forEach(x=>{ const n=(ledgerPhotoMeta[x]||{}).no||0; if(n>mx) mx=n; });
+  p.photos.forEach(x=>{ const m=photoMeta(x); if(!m.no) m.no=++mx; });
+  p.photoSeq=mx;   // 旧データ（番号なし）もここで一度に番号が付き、以後は減らない
+}
+function photoName(p,src,dwgId){
+  if(!src) return '写真';
+  const slot=p?slotForSrc(dwgId||ledgerDwgId||state.selectedId,p.id,src):null;
+  if(slot&&slot.name) return slot.name;
+  const m=photoMeta(src);
+  if(m.name) return m.name;
+  ensurePhotoNos(p);
+  return m.no?('写真'+m.no):'写真';
+}
+// 名前の付け替え。枠のある写真は枠名を、無い写真は「内容」を書き換える（画面に出ている方を直す）
+function renamePhoto(p,src,v){
+  const sl=slotForSrc(state.selectedId,p.id,src);
+  if(sl) sl.name=v; else photoMeta(src).name=v;
+}
 function findSlot(sid){
   const byPin=ledgerPlan[ledgerDwgId]||{};
   for(const pid in byPin){ const s=byPin[pid].find(x=>x.id===sid); if(s) return s; }
@@ -4917,7 +5020,7 @@ $('#slotPhotoInput').addEventListener('change',e=>{
     const sl=planArr(ledgerDwgId,p.id).find(x=>x.id===t.slot);
     bindPhotoToSlot(ledgerDwgId,p.id,t.slot,src);
     photoMeta(src).ts=new Date().toISOString(); // 撮影日時を記録
-    pinLog(p,'shoot',slotLabel(sl));
+    pinLog(p,'shoot',photoName(p,src,ledgerDwgId));
     afterPlanChange('枠に写真を登録しました');
   });
 });
@@ -5987,6 +6090,34 @@ let jsZipLoading=null;
 /* ホーム画面から起動した状態（standalone）では、iOSはSafariのUIを持たないため
    a[download] や pdf.save() でファイルが保存されないことがある。押したのに何も起きない、と
    なると原因が分からないので、書き出しの前に一度だけ知らせる。 */
+/* 押した反応を全ボタンへ。:active に頼らないのは、iOS Safari ではスクロールできる領域の中で
+   発火しないことがあるため（現場で「押しても反応しない」と感じる主因）。
+   指が動いたら外すので、ドラッグやスクロールの途中で押しっぱなしに見えることはない。 */
+const PRESSABLE_SEL='button, .pressable, [role="button"]';
+(function attachPressFeedback(){
+  let el=null, pt=null, timer=0;
+  const clear=()=>{
+    if(el){ el.classList.remove('pressing'); el=null; }
+    pt=null; if(timer){ clearTimeout(timer); timer=0; }
+  };
+  document.addEventListener('pointerdown',e=>{
+    const t=e.target && e.target.closest ? e.target.closest(PRESSABLE_SEL) : null;
+    clear();
+    if(!t || t.disabled) return;
+    el=t; pt={x:e.clientX,y:e.clientY};
+    el.classList.add('pressing');
+    // pointerup を取りこぼしても押しっぱなしにしない（再描画で要素が消える経路があるため）
+    timer=setTimeout(clear,1500);
+  },true);
+  document.addEventListener('pointermove',e=>{
+    if(!el||!pt) return;
+    if(Math.hypot(e.clientX-pt.x,e.clientY-pt.y)>10) clear();  // スクロール／ドラッグに移った
+  },true);
+  ['pointerup','pointercancel','dragstart','contextmenu'].forEach(t=>document.addEventListener(t,clear,true));
+  window.addEventListener('scroll',clear,true);
+  window.addEventListener('blur',clear);
+})();
+
 function isStandaloneApp(){
   try{ return !!(window.navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)); }
   catch(_){ return false; }
@@ -6251,8 +6382,7 @@ async function rotatePanno(dir){
       if(pannoPhoto.complete&&pannoPhoto.naturalWidth){ sizePannoCanvas(); redrawPanno(); }
       refreshPannoBtns();
       const owner=pinOwnerOfPhoto(out);
-      if(owner) pinLog(owner,'rotate',slotLabel(slotForSrc(ledgerDwgId||state.selectedId,owner.id,out)),
-                       dir>0?'右に90°回転':'左に90°回転');
+      if(owner) pinLog(owner,'rotate',photoName(owner,out), dir>0?'右に90°回転':'左に90°回転');
     });
   } finally { pannoRotating=false; }
 }
@@ -6277,7 +6407,7 @@ function closePanno(){
   if(src && hasPhotoInk(src)){
     const did=ledgerDwgId||state.selectedId; // ピンから開いた場合は現在の図面を使う
     const owner=(pins[did]||[]).find(p=>p.photos.includes(src));
-    if(owner) pinLog(owner,'update',slotLabel(slotForSrc(did,owner.id,src)),`書き込み${(photoInk[src]||[]).length}個`);
+    if(owner) pinLog(owner,'update',photoName(owner,src,did),`書き込み${(photoInk[src]||[]).length}個`);
   }
   renderLedger(); // サムネイルの注釈バッジ・枚数を更新
   renderPhotoGrid(); // ピンの写真グリッドにも注釈を反映（ピン非表示時は早期return）
@@ -7129,7 +7259,7 @@ $('#sizeReset').addEventListener('click',()=>{
 /* ピンのログ一覧。新しい順に、日付ごとにまとめて表示する。
    見出しは開閉ボタンを兼ねる（既定は畳んだ状態。選択は端末に覚えさせる）。 */
 const LOG_ACTION_LABEL={shoot:'撮影',update:'更新',delete:'削除',rotate:'回転',
-  group:'区分',classify:'分類',ledger:'台帳',note:'備考'};
+  group:'区分',classify:'分類',ledger:'台帳',note:'備考',name:'名前'};
 const PIN_LOG_HEAD=32;      // 最初に出す件数（残りは「さらに表示」で開く）
 const LS_PINLOG='zk_pinlog_open';
 let pinLogOpen=(lsGet(LS_PINLOG)==='1');
@@ -7239,9 +7369,9 @@ function renderPhotoGrid(){
   const cell=(o)=>{ const src=o.src, i=p.photos.indexOf(src), off=photoOff(p,src);
     return `<div class="photo-item${off?' led-off':''}"><div class="photo-cell"><img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" data-i="${i}">`
       +`<select class="photo-gsel" data-src="${escAttr(src)}">${gOptions(photoGid(p,src))}</select>`
-      +`${o.name?`<span class="photo-slot-tag">${escHtml(o.name)}</span>`:''}`
       +`<button class="photo-anno ${hasPhotoInk(src)?'has':''}" data-anno="${escAttr(src)}" title="写真に書き込み">${ANNO}</button>`
       +`<button class="rm" data-rm="${i}">${RM}</button></div>`
+      +`<button class="photo-name" data-pname="${escAttr(src)}" title="タップで名前を変更">${escHtml(photoName(p,src))}</button>`
       +`<label class="photo-date-row" title="チェックを外すと写真台帳に載せません">`
       +`<input type="checkbox" class="photo-led-cb" data-led="${escAttr(src)}" ${off?'':'checked'}>`
       +`<span class="photo-date">${photoTimeLabel(src)||'\u2014'}</span></label></div>`;
@@ -7272,6 +7402,17 @@ function renderPhotoGrid(){
   applyComposited(g); // 注釈があれば合成画像をサムネイルに反映
   g.querySelectorAll('img.lphoto-img').forEach(im=>im.addEventListener('click',()=>{ if(Date.now()-lastPhotoDragEnd<350) return; openLightbox(compositeCache[im.dataset.src]||im.dataset.src, im.dataset.src); }));
   g.querySelectorAll('.photo-anno').forEach(btn=>btn.addEventListener('click',e=>{ e.stopPropagation(); openPanno(btn.dataset.anno); }));
+  // 写真の名前を変える。ログにこの名前が出るので、ここを直すと後から見て何の写真か分かる
+  g.querySelectorAll('[data-pname]').forEach(btn=>btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const src=btn.dataset.pname, cur=photoName(p,src);
+    const n=prompt('写真の名前（ログや写真台帳に出ます）',cur);
+    if(n===null) return;                     // 取り消し
+    renamePhoto(p,src,n.trim());
+    const now=photoName(p,src);
+    if(now!==cur) pinLog(p,'name',now,`「${cur}」から変更`);
+    renderPhotoGrid(); renderLedger(); renderPinLog();
+  }));
   g.querySelectorAll('.photo-led-cb').forEach(cb=>{
     cb.addEventListener('click',e=>e.stopPropagation());   // 写真タップ（拡大）に伝播させない
     cb.addEventListener('change',e=>{
@@ -7280,7 +7421,7 @@ function renderPhotoGrid(){
       setPhotoOff(p,src,off);
       const item=cb.closest('.photo-item');
       if(item) item.classList.toggle('led-off',off);       // 並びは変わらないので再描画しない
-      pinLog(p,'ledger',slotLabel(slotForSrc(state.selectedId,p.id,src)), off?'写真台帳に載せない':'写真台帳に載せる');
+      pinLog(p,'ledger',photoName(p,src), off?'写真台帳に載せない':'写真台帳に載せる');
       toast(off?'この写真は写真台帳に載せません':'この写真を写真台帳に載せます', off?'warn':'ok');
     });
   });
@@ -7290,7 +7431,7 @@ function renderPhotoGrid(){
     const nameOf=gid=>{ const x=(p.groups||[]).find(y=>y.id===gid); return x?x.name:'未分類'; };
     const from=nameOf(photoGid(p,src)), to=nameOf(sel.value||null);
     setPhotoGid(p,src,sel.value||null);
-    if(from!==to) pinLog(p,'classify',slotLabel(slotForSrc(state.selectedId,p.id,src)),`${from} → ${to}`);
+    if(from!==to) pinLog(p,'classify',photoName(p,src),`${from} → ${to}`);
     renderPhotoGrid(); }); });
   g.querySelectorAll('[data-gadd]').forEach(b=>b.addEventListener('click',()=>{ pinPhotoTargetGid=b.dataset.gadd||null; $('#photoInput').click(); }));
   // 並べ替え。再描画で押したボタン自体が動くので、移動先の区分を画面内に引き戻す。
@@ -7314,8 +7455,7 @@ function renderPhotoGrid(){
     e.stopPropagation();
     const ok=await gConfirm({title:'写真を削除しますか？',desc:'この写真を台帳から削除します。<br>撮影枠は残り「未撮影」に戻ります。',ok:'削除',danger:true});
     if(!ok) return;
-    const sl=slotForSrc(state.selectedId,p.id,p.photos[+b.dataset.rm]);
-    const label=slotLabel(sl);
+    const label=photoName(p,p.photos[+b.dataset.rm]);  // 消す前に名前を控える
     const [gone]=p.photos.splice(+b.dataset.rm,1);
     delete cellImgCache[gone];
     setPhotoGid(p,gone,null);
@@ -7445,7 +7585,7 @@ $('#pinSlotPhotoInput').addEventListener('change',e=>{
     p.photos.push(src);
     const sl=planArr(state.selectedId,p.id).find(x=>x.id===slotId);
     bindPhotoToSlot(state.selectedId,p.id,slotId,src);
-    pinLog(p,'shoot',slotLabel(sl));
+    pinLog(p,'shoot',photoName(p,src));
     renderPhotoGrid();renderPins();renderContext();renderList();renderPinLog();
     toast('枠に写真を登録しました','ok');
   });
@@ -7546,7 +7686,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v7.99';
+const APP_BUILD='v8.1';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの
@@ -7989,7 +8129,7 @@ function renderContext(){
     const viewing=viewingVerObj();
     [...d.versions].reverse().forEach(v=>{
       const work=isWorkVer(v);
-      vh+=`<div class="ver-item ${v.v===viewing.v?'viewing':''}" data-ver="${v.v}">
+      vh+=`<div class="ver-item pressable ${v.v===viewing.v?'viewing':''}" data-ver="${v.v}">
         <div class="top"><span class="vnum">${verLabel(v.v)}</span><span class="mini-pill ${work?'pub':'old'}">${work?'編集中':'確定済み'}</span></div>
         <div class="vdate">${escHtml(v.date||'')}</div><div class="vnote">${escHtml(v.note||(work?'この版を編集しています。区切りがついたら確定してください。':''))}</div></div>`;
     });
@@ -8032,7 +8172,7 @@ function renderContext(){
       const pc=p.color||DEFAULT_COLOR, ic=ICONS[p.icon]||ICONS[DEFAULT_ICON];
       const thumb=p.photos.length?`<img class="thumb" src="${p.photos[0]}">`:'';
       const title=p.title||`ピン P${i+1}`;
-      ph+=`<div class="pinrow" data-pin="${p.id}">
+      ph+=`<div class="pinrow pressable" data-pin="${p.id}">
         <span class="pdot" style="background:${pc}"><svg viewBox="0 0 24 24" width="17" height="17">${ic}</svg></span>
         <div class="info"><div class="pt">${title}</div>
           <div class="ps">X:${p.x} Y:${p.y}<span class="pin-cnt">📷 ${p.photos.length}</span></div></div>

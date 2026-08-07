@@ -1200,6 +1200,13 @@
        [ホーム画面起動時の注意] standalone ではSafariのUIが無く、a[download] や pdf.save() で
        ファイルが保存されないことがある。押しても何も起きないと原因が分からないので、
        PDF・Excelの書き出し前に一度だけ「保存できないときはSafariで」と知らせる。
+  build v7.99 (収納したログの見出しを、ボタンと分かる形に)  —
+       [経緯] v7.97 で見出しを開閉ボタンにしたとき、それまでのラベル(.picker-lbl＝極小・字間広め・
+       地色なし)の見た目をそのまま引き継いだため、押せるものだと気づかれなかった。
+       [直し方] 周囲の .ph-btn / .pin-del と同じ「枠と地色のあるボタン」に揃える。高さ48pxを確保し、
+       左に履歴アイコン、右に「開く／閉じる」の文字と山形の記号を置く。記号だけだと何が起きるか
+       伝わらないため、状態を文字でも出す（開いているときは「閉じる」）。開いている間は地色を
+       一段明るくして、閉じているときとの違いを分かるようにした。
 -->
 <html lang="ja">
 <head>
@@ -1752,12 +1759,22 @@
     font-size:10.5px;line-height:1.2;max-width:100%}
   .photo-empty{grid-column:1/-1;text-align:center;color:var(--muted2);font-size:12.5px;padding:18px;line-height:1.6;border:1px dashed var(--line2);border-radius:12px}
   /* ログの見出し＝開閉ボタン。押しても見出しの位置は動かず、下の中身だけ伸縮する */
-  .pin-log-head{display:flex;align-items:center;gap:8px;width:100%;margin:2px 2px 8px;padding:6px 2px;
-    background:none;border:none;color:var(--muted2);font-family:var(--mono);font-size:11px;letter-spacing:.6px;text-transform:uppercase}
-  .pin-log-head .cnt{font-size:10.5px;padding:1px 7px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  /* 押せるものだと一目で分かるよう、枠と地色のあるボタンにする（.ph-btn/.pin-del と同じ流儀）。
+     指で押す前提なので高さは48px確保する。 */
+  .pin-log-head{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;margin:2px 0 10px;padding:0 14px;
+    background:var(--panel2);border:1px solid var(--line2);border-radius:12px;color:var(--text);
+    font-size:13.5px;font-weight:600;text-align:left}
+  .pin-log-head:active{transform:scale(.98)}
+  .pin-log-head.open{background:var(--panel3);border-color:var(--line2)}
+  .pin-log-head .ic{flex-shrink:0;width:18px;height:18px;color:var(--muted)}
+  .pin-log-head .cnt{font-size:11px;font-family:var(--mono);padding:2px 8px;border-radius:99px;
+    background:var(--panel);border:1px solid var(--line);color:var(--muted)}
   .pin-log-head .sp{flex:1}
-  .pin-log-head svg{width:16px;height:16px;pointer-events:none;transition:transform .18s ease}
-  .pin-log-head.open svg{transform:rotate(180deg)}
+  /* 「開く／閉じる」を文字でも出す。記号だけだと何が起きるか伝わりにくい */
+  .pin-log-head .act{flex-shrink:0;font-size:11.5px;font-weight:600;color:var(--muted)}
+  .pin-log-head svg{pointer-events:none}
+  .pin-log-head .chev{flex-shrink:0;width:18px;height:18px;color:var(--muted);transition:transform .18s ease}
+  .pin-log-head.open .chev{transform:rotate(180deg)}
   .pin-log{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
   .pin-log[hidden]{display:none}
   .pin-log-date{font-size:11px;color:var(--muted2);font-family:var(--mono);margin:8px 2px 2px}
@@ -2246,7 +2263,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="配信ファイルをindex.htmlに／ホーム画面追加に対応">build v7.98</button>
+          data-desc="収納したログの見出しをボタンと分かる形に">build v7.99</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2577,9 +2594,11 @@
     </div>
   </div>
   <div class="photo-grid" id="photoGrid"></div>
-  <button class="pin-log-head" id="pinLogHead" style="margin-top:6px" aria-expanded="false">
+  <button class="pin-log-head" id="pinLogHead" style="margin-top:6px" aria-expanded="false" aria-controls="pinLog">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><path d="M3.05 11a9 9 0 1 0 .5-4"/><path d="M3 3v5h5"/></svg>
     <span>ログ</span><span class="cnt" id="pinLogCount">0</span><span class="sp"></span>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    <span class="act" id="pinLogAct">開く</span>
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
   </button>
   <div class="pin-log" id="pinLog" hidden></div>
   <button class="pin-del" id="pinDelete">このピンを削除</button>
@@ -7157,8 +7176,9 @@ function logTimeText(e){
 function setPinLogOpen(open){
   pinLogOpen=!!open;
   lsSet(LS_PINLOG, pinLogOpen?'1':'0');
-  const head=$('#pinLogHead'), body=$('#pinLog');
+  const head=$('#pinLogHead'), body=$('#pinLog'), act=$('#pinLogAct');
   if(head){ head.classList.toggle('open',pinLogOpen); head.setAttribute('aria-expanded',pinLogOpen?'true':'false'); }
+  if(act) act.textContent=pinLogOpen?'閉じる':'開く';
   if(body) body.hidden=!pinLogOpen;
 }
 function renderPinLog(){
@@ -7526,7 +7546,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v7.98';
+const APP_BUILD='v7.99';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの

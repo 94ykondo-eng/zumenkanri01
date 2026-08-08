@@ -1266,6 +1266,19 @@
        上部に「載せない n」を別に出す。
        [再描画] 切り替えのたびに作り直すが、#ledgerBody の scrollTop を保存・復元する。
        長い一覧で先頭へ飛ぶと、どこを触っていたか分からなくなるため。
+  build v8.3 (写真台帳で区分ごとにしまう)  —
+       [UI] 区分の見出しの左半分（山形＋区分名＋件数）が開閉ボタン。右側の並べ替え・まとめて切替とは
+       別のボタンにしてあるので、しまうつもりで並べ替えを押す事故が起きない。
+       [状態の持ち方] しまっている区分は端末に覚えさせる（localStorage: zk_ledger_collapsed）。
+       表示の都合でしかないので図面データには入れない＝保存・復元・版スナップショットに影響しない。
+       キーは区分ID（newGidで一意）。未分類はピンごとなので 'un:'+ピンID。400件で古いものから捨てる。
+       [出力に影響しない] ledgerCells は ledgerCollapsed を一切見ない。しまっていてもPDF・Excelには
+       従来どおり出る。「画面で隠す」と「出力から外す」は別物（外すのは v8.2 の載せる/載せない）。
+       [しまっていても分かること] 見出しに写真の件数と、載せない件数を出す。畳んだまま
+       「載せないままだった」を見落とさないため。
+       [再描画しない] その場で hidden を付け外しするだけ。作り直すと見ていた位置がずれる。
+       なお .lgrp-photos は display:grid を持つため、hidden 属性だけでは消えない
+       （.lgrp-photos[hidden]{display:none} が要る）。
 -->
 <html lang="ja">
 <head>
@@ -2217,6 +2230,18 @@
     border-bottom:1px solid var(--line2);padding:2px 0 8px;margin-top:8px}
   .lgrp-cnt{font-size:12px;font-weight:600;color:var(--muted);background:var(--panel2);border-radius:20px;padding:1px 10px}
   .lgrp-head .sp{flex:1}
+  /* 区分の見出し＝開閉ボタン。押しても見出しの位置は動かず、下の写真だけ伸縮する */
+  .lgrp-toggle{display:flex;align-items:center;gap:9px;min-width:0;padding:5px 9px 5px 5px;border-radius:8px;
+    background:none;color:inherit;font:inherit;text-align:left}
+  .lgrp-toggle:active{background:var(--panel2)}
+  .lgrp-toggle .chev{width:18px;height:18px;flex-shrink:0;color:var(--muted);pointer-events:none;transition:transform .18s ease}
+  .lgrp-head.collapsed .lgrp-toggle .chev{transform:rotate(-90deg)}
+  .lgrp-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* しまっている間も「載せない」件数は見えるようにする（畳んだまま見落とさないため） */
+  .lgrp-offcnt{font-size:11px;font-weight:600;color:#FF8A7F;background:rgba(240,68,56,.12);
+    border:1px solid rgba(240,68,56,.35);border-radius:20px;padding:0 9px}
+  /* .lgrp-photos は display:grid を持つので、hidden 属性だけでは消えない */
+  .lgrp-photos[hidden]{display:none}
   /* 区分の並べ替え。端では薄くして当たり判定だけ切る（位置が動くと押し間違えるため） */
   .lgrp-mini{width:32px;height:30px;flex-shrink:0;border-radius:7px;background:var(--panel2);border:1px solid var(--line2);
     color:var(--muted);display:flex;align-items:center;justify-content:center}
@@ -2369,7 +2394,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="写真台帳で区分の並べ替えと「載せる/載せない」">build v8.2</button>
+          data-desc="写真台帳で区分ごとにしまう">build v8.3</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -3359,6 +3384,24 @@ function ledgerProgress(dwgId){
     off+=extra.filter(src=>photoOff(p,src)).length;
   });
   return {done,total,short:total-done,off};
+}
+/* 台帳でしまっている区分。表示の都合だけなので図面データには入れず、端末に覚えさせる。
+   キーは区分ID（newGid で一意）。未分類はピンごとなので 'un:'+ピンID。
+   出力（PDF・Excel）には一切影響しない＝ledgerCells は何も見ない。 */
+const LS_LGRP='zk_ledger_collapsed';
+const LGRP_MAX=400;                 // 際限なく増やさない（古いものから捨てる）
+let ledgerCollapsed=(()=>{
+  try{ const a=JSON.parse(lsGet(LS_LGRP)||'[]'); return new Set(Array.isArray(a)?a:[]); }
+  catch(_){ return new Set(); }
+})();
+function lgrpKey(pinId,gid){ return gid || ('un:'+pinId); }
+function isLgrpCollapsed(pinId,gid){ return ledgerCollapsed.has(lgrpKey(pinId,gid)); }
+function setLgrpCollapsed(pinId,gid,on){
+  const k=lgrpKey(pinId,gid);
+  if(on) ledgerCollapsed.add(k); else ledgerCollapsed.delete(k);
+  let arr=[...ledgerCollapsed];
+  if(arr.length>LGRP_MAX){ arr=arr.slice(arr.length-LGRP_MAX); ledgerCollapsed=new Set(arr); }
+  lsSet(LS_LGRP,JSON.stringify(arr));
 }
 // 区分（gid=null は未分類）に属する、この図面の写真src一覧
 function groupPhotoSrcs(p,gid){
@@ -4726,6 +4769,15 @@ function renderLedger(){
       const UP2='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>';
       const DN2='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
       // 区分まるごとの切替は「1枚でも載せているなら全部やめる／全部やめているなら全部載せる」
+      const CHEV='<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+      // 見出しの左半分（山形＋区分名＋件数）が開閉ボタン。右側の並べ替え・一括切替とは別のボタンにする
+      const headBtn=(gid,name,n,srcs)=>{
+        const offN=srcs.filter(src=>photoOff(p,src)).length;
+        return `<button class="lgrp-toggle" data-gtog="${gid||''}" data-pin="${p.id}" title="タップでしまう／開く">`
+          +`${CHEV}<span class="lgrp-name">${escHtml(name)}</span><span class="lgrp-cnt">${n}</span>`
+          +(offN?`<span class="lgrp-offcnt">載せない ${offN}</span>`:'')
+          +`</button>`;
+      };
       const offBtn=(gid,srcs)=>{
         const on=srcs.filter(src=>!photoOff(p,src)).length;
         const allOff=srcs.length>0&&on===0;
@@ -4735,20 +4787,23 @@ function renderLedger(){
       lgroups.forEach((gp,gi)=>{
         const its=items.filter(it=>photoGid(p,it.src)===gp.id);
         const srcs=its.map(it=>it.src);
-        html+=`<div class="lgrp-head"><span class="lgrp-name">${escHtml(gp.name)}</span><span class="lgrp-cnt">${its.length}</span><span class="sp"></span>`;
+        const cl=isLgrpCollapsed(p.id,gp.id);
+        html+=`<div class="lgrp-head${cl?' collapsed':''}">`+headBtn(gp.id,gp.name,its.length,srcs)+`<span class="sp"></span>`;
         if(lgroups.length>1){
           html+=`<button class="lgrp-mini" data-gup2="${gp.id}" data-pin="${p.id}" ${gi<=0?'disabled':''} title="この区分を上へ">${UP2}</button>`
                +`<button class="lgrp-mini" data-gdn2="${gp.id}" data-pin="${p.id}" ${gi>=lgroups.length-1?'disabled':''} title="この区分を下へ">${DN2}</button>`;
         }
-        html+=offBtn(gp.id,srcs)+`</div><div class="lgrp-photos">`;
+        html+=offBtn(gp.id,srcs)+`</div><div class="lgrp-photos" data-gbody="${gp.id}" ${cl?'hidden':''}>`;
         its.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no,p));
         if(!its.length) html+=`<div class="lphoto-none">この区分の写真はまだありません。</div>`;
         html+=`</div>`;
       });
       const un=items.filter(it=>{ const gid=photoGid(p,it.src); return !gid||!lgroups.find(g=>g.id===gid); });
       if(un.length||emptyItems.length){
-        html+=`<div class="lgrp-head"><span class="lgrp-name">未分類</span><span class="lgrp-cnt">${un.length}</span><span class="sp"></span>`
-             +offBtn(null,un.map(it=>it.src))+`</div><div class="lgrp-photos">`;   // 未分類は常に最後なので並べ替えは無し
+        const clU=isLgrpCollapsed(p.id,null);
+        html+=`<div class="lgrp-head${clU?' collapsed':''}">`+headBtn(null,'未分類',un.length,un.map(it=>it.src))
+             +`<span class="sp"></span>`
+             +offBtn(null,un.map(it=>it.src))+`</div><div class="lgrp-photos" data-gbody="un:${p.id}" ${clU?'hidden':''}>`;   // 未分類は常に最後なので並べ替えは無し
         un.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no,p));
         emptyItems.forEach(it=>html+=emptyCellHtml(it.sl,p.id,it.no));
         html+=`</div>`;
@@ -4939,6 +4994,17 @@ function bindLedger(){
     renderLedger();
     const nb=$('#ledgerBody'); if(nb) nb.scrollTop=y;
   };
+  // 区分をしまう／開く。作り直さずにその場で切り替える（見ていた位置がずれないため）。
+  // 表示だけの話なので、出力（PDF・Excel）には影響しない。
+  body.querySelectorAll('[data-gtog]').forEach(b=>b.addEventListener('click',()=>{
+    const pinId=b.dataset.pin, gid=b.dataset.gtog||null;
+    const head=b.closest('.lgrp-head');
+    const panel=body.querySelector(`.lgrp-photos[data-gbody="${gid||('un:'+pinId)}"]`);
+    const next=!isLgrpCollapsed(pinId,gid);
+    setLgrpCollapsed(pinId,gid,next);
+    if(head) head.classList.toggle('collapsed',next);
+    if(panel) panel.hidden=next;
+  }));
   // 区分の並べ替え（ピンの写真画面と同じ moveGroupInList。台帳・PDF・Excel の出力順が変わる）
   const moveG=(pinId,gid,dir)=>{
     const p=(pins[ledgerDwgId]||[]).find(x=>x.id===pinId); if(!p) return;
@@ -7792,7 +7858,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v8.2';
+const APP_BUILD='v8.3';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの

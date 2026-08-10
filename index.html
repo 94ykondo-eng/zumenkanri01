@@ -1329,6 +1329,65 @@
        移動が消えるのを防ぐ（v7.73と同じ方針）。運び終えた直後のタップでは拡大表示を出さない。
        [別のピンへは運べない] 落とし先が別のピンなら何もしない。ピンをまたぐ移動は写真の持ち主が
        変わる話で、並べ替えとは別物のため。
+
+  build v8.7 (ピンの写真画面で区分を見分けやすく)  —
+       [きっかけ] 「どこまでが同じ区分か分からない」。区分の見出しは 13px の太字テキストだけで、
+       地色も枠も区切り線も無く、セクションの間隔は 16px しかなかった。写真が数枚ずつ続くと、
+       見出しが写真の列に埋もれる。台帳側（.lgrp-head）には地色と件数があり、画面によって
+       見た目が違うことも混乱のもとだった。
+       [直し方] ①区分ごとにカードで囲う（面で区切る）②見出しを地色のある帯にし、左端に
+       4px の色帯と件数のチップを付ける。境界を「線」ではなく「面」で見せるのが要点で、
+       写真の枚数が変わっても区切りの見え方が変わらない。
+       [左端の色帯は box-shadow の inset で描く] border-left にすると、見出しがカードの
+       内側余白を打ち消すために持っている負マージンと角丸の組み合わせで、見出しだけ 1px 幅が
+       ずれる。inset の影なら領域を取らないのでずれない。
+       [未分類は控えめに] 「まだ仕分けていない置き場」であって区分ではないので、地色を持たせず
+       破線の枠にし、左の色帯も信号色ではなく線の色にする。区分と同じ強さで出すと、
+       未分類が一番目立つ区分に見えてしまう。
+       [ドラッグの落とし先が分かりやすくなる副次効果] .pg-section が長押しドラッグの落とし先
+       （v7.71）なので、カードの枠がそのまま「ここへ落とせる」の範囲を示すようになった。
+       [件数] 見出しに区分の写真枚数を出す。畳む機能は台帳側だけなので、ここでは表示のみ。
+       [触っていないもの] p.groups・写真の並び・出力（ledgerCells）には一切手を入れていない。
+       見た目だけの変更。
+
+  build v8.8 (写真の連続線：写真の外をタップして終了)  —
+       [きっかけ] 図面側には「図面の外をタップしたら線が終わる」（overSheet の判定）が v7 から
+       あったが、写真側には無く、終わり方がダブルタップだけだった。v8.4 で挙動を揃えたときの
+       積み残し。同じ機能が2実装ある、の典型（§3.11）。
+       [どこで拾うか] pannoCanvas は写真ぴったりを覆っているので、キャンバスの外＝写真の外は
+       キャンバスの pointerdown には届かない。1つ外側の #pannoStage で拾い、
+       「写真の上でない」ときだけ終える。写真の上のタップはキャンバスから普通に上がってくるので
+       e.target.closest('#pannoHolder') で除く（キャンバス側は stopPropagation していない）。
+       [ピンチと取り違えない] pannoPointers.size（写真に触れている指の数）が0のときだけ終える。
+       1本でも触れているなら、2本目の指を写真の外に置いたピンチの途中かもしれない。図面側が
+       pointers.size===1 のときだけ finishPoly する、のと同じ考え方。
+       [終わり方は3つになった] ①ダブルタップ ②別のツール・図形へ切り替え ③写真の外をタップ。
+       ①はv8.4で画面px・ミリ秒の判定に直した。③が増えても①②の経路には触れていない。
+
+  build v8.9 (白紙の方眼を細かく＋シフトで方眼に吸着)  —
+       [方眼を細かく] 白紙作成ダイアログに「方眼の細かさ」（5mm／10mm、既定5mm）を追加。
+       5mm を選ぶと 5mm(極細)＋10mm(細)＋50mm(太) の3段になる。A3横でも5mmは1600px換算で
+       約19px間隔あり、つぶれない。10mm を選べば従来と同じ絵。
+       [方眼は絵であってデータではない] generateBlankSheet() が canvas に焼き込んだ画像なので、
+       アプリは方眼の位置を知らない。そこで作成時に **d.gridUnit（キャンバス座標での1マス）** を
+       図面に持たせた。gridUnit = 座標系の幅 × 方眼mm ÷ 用紙の幅mm。方眼は px で
+       「用紙幅mm ÷ 方眼mm」等分に引いてあるので、この式で線の位置と一致する。
+       **v8.9 より前に作った白紙には gridUnit が無い＝吸着しない**（用紙サイズを後から推測できない。
+       A4とA3は縦横比が同じなので画像からは区別できず、誤った間隔に吸着させるほうが害が大きい）。
+       [シフト＝方眼に合わせる] 白紙図面でシフトが効いている間、点を方眼の交点へ丸める。
+       **順序は「先に方眼へ吸着 → そのあと正方形・正円・45°の固定」**（吉彦さんの選択）。
+       方眼の目が縦横同じなので、正方形の1辺も方眼の整数倍になる。45°の直線だけは角度を優先する
+       ぶん端点が目からわずかに外れる（斜辺が√2倍のため）。
+       [効く場所] ①新しく描く図形の始点と終点（四角・円・直線・矢印・連続線）
+       ②選択して枠のハンドルで伸縮（v7.87／selScaleFactors に step を渡す。ハンドルは枠より
+       SEL_PAD だけ外に描いてあるので、**その分を戻したあとに丸める**。先に丸めると余白ぶんずれる）
+       ③1つの図形のハンドルでの変形 ④移動（マス単位で動かす＝方眼に乗った図形が乗ったまま動く）。
+       取り込んだ図面には方眼が無いので、従来どおり正方形・45°の固定だけが効く。
+       [ペンの手描きには効かない] なぞった線を方眼に吸わせても意味がないため。
+       [角のハンドルだけは比率が勝つ] 選択枠の角を掴んだときはシフトで縦横比も固定されるので、
+       方眼へ丸めたあとに比率をそろえる過程で、片方の辺が目から外れることがある（比率のもとに
+       なった側の辺は目に乗る）。**きっちり目に合わせたいときは辺の真ん中のハンドルを使う**
+       （1軸だけなので比率の固定が働かず、必ず目に乗る）。
 -->
 <html lang="ja">
 <head>
@@ -1844,9 +1903,27 @@
   .ph-btn:active{transform:scale(.96)}
   .photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px;margin-bottom:18px;min-height:8px}
   #photoGrid{display:block;margin-bottom:0}
-  .pg-section{margin-bottom:16px}
-  .pg-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-  .pg-name{font-size:13px;font-weight:700;color:var(--text)}
+  /* 区分は「カード」で囲い、見出しは地色のある帯にする（v8.7）。
+     写真が続けて並ぶだけだと、どこまでが同じ区分か分からない、という報告への対処。
+     境界を線ではなく面で見せるので、写真の枚数が変わっても区切りの見え方が変わらない。 */
+  .pg-section{margin-bottom:14px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:12px;padding:10px}
+  /* 未分類は「まだ仕分けていない置き場」。区分と同じ強さで出すと一番目立つ区分に見えるので控えめに */
+  .pg-section.uncat{background:none;border-style:dashed}
+  /* 左端の色帯は box-shadow の inset で描く。border-left にすると、下の負マージン（カードの
+     内側余白を打ち消す）と角丸の組み合わせで見出しだけ幅が1pxずれる */
+  .pg-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    margin:-10px -10px 10px;padding:9px 10px;background:var(--panel3);
+    border-bottom:1px solid var(--line);border-radius:11px 11px 0 0;
+    box-shadow:inset 4px 0 0 var(--signal)}
+  .pg-section.uncat .pg-head{background:var(--panel2);box-shadow:inset 4px 0 0 var(--line2)}
+  .pg-title{display:flex;align-items:center;gap:8px;min-width:0}
+  .pg-name{font-size:14px;font-weight:700;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pg-cnt{flex-shrink:0;font-size:11.5px;font-weight:600;color:var(--muted);
+    background:var(--panel);border:1px solid var(--line2);border-radius:20px;padding:1px 9px}
+  /* カードの内側なので、写真グリッド側の下余白は要らない（二重に空く） */
+  .pg-section .photo-grid{margin-bottom:0}
   .pg-tools{display:flex;gap:6px;align-items:center;flex-shrink:0}
   .pg-mini{font-size:11px;padding:4px 9px;border-radius:7px;background:var(--panel2);border:1px solid var(--line2);color:var(--muted)}
   .pg-move{padding:4px 8px;display:flex;align-items:center;justify-content:center}
@@ -2458,7 +2535,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="写真台帳で長押しドラッグして好きな位置へ">build v8.6</button>
+          data-desc="白紙の方眼を細かく＋シフトで方眼に合わせて作図">build v8.9</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2506,7 +2583,7 @@
       <button class="shape-btn" data-shape="arrow" title="矢印"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/><path d="M12 4h8v8"/></svg></button>
       <button class="shape-btn" data-shape="poly" title="連続線（タップで点を追加、ダブルタップで終了）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18l5-9 5 6 8-11"/></svg></button>
       <div class="shape-sep"></div>
-      <button class="shape-btn shift-btn" id="btnShiftToggle" title="シフト：正方形・正円・45°刻みの直線に固定">
+      <button class="shape-btn shift-btn" id="btnShiftToggle" title="シフト：正方形・正円・45°刻みの直線に固定／白紙の図面では方眼にも合わせる">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 7h-4.5v9h-5v-9H5z"/></svg>
       </button>
     </div>
@@ -2968,7 +3045,7 @@
       <h3>白紙から作図</h3>
       <button class="close-x" id="blkClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
-    <p class="cal-desc">方眼つきの白紙を v1.0（最新）として追加します。縮尺は未設定です。</p>
+    <p class="cal-desc">方眼つきの白紙を v1.0（最新）として追加します。縮尺は未設定です。図形はシフトを入れると方眼に合わせて描けます。</p>
     <div class="imp-preview" id="blkPreview"><span class="ph">…</span></div>
     <div class="imp-meta" id="blkMeta"></div>
     <div class="cal-fields">
@@ -2978,6 +3055,12 @@
           <select id="blkSize" class="cal-unit" style="flex:1;height:40px"><option value="A4">A4</option><option value="A3">A3</option></select>
           <select id="blkOrient" class="cal-unit" style="flex:1;height:40px"><option value="land">横</option><option value="port">縦</option></select>
         </div>
+      </div>
+      <div class="cal-field">
+        <label class="cal-lbl" for="blkGrid">方眼の細かさ</label>
+        <div class="cal-field-in" style="flex:0 0 210px"><select id="blkGrid" class="cal-unit" style="flex:1;height:40px">
+          <option value="5">5mm（細かい）</option><option value="10">10mm</option>
+        </select></div>
       </div>
       <div class="cal-field">
         <label class="cal-lbl" for="blkName">図面名</label>
@@ -3983,13 +4066,16 @@ function snapItemFull(item){
 /* ドラッグ位置から倍率を求める。
    keepRatio のときは縦横の大きいほうに合わせて比率を保つ。
    辺のハンドルはその軸だけ動かす。つぶれ防止に最小1pxを確保。 */
-function selScaleFactors(drag, pt, keepRatio){
+function selScaleFactors(drag, pt, keepRatio, step){
   const b=drag.box, MIN=1;                             // b は余白なしの外接矩形
   const fx=drag.h.fx, fy=drag.h.fy;
   // ハンドルは枠から SEL_PAD だけ外側に描いてある。指の位置からその余白を戻してから
   // 比べないと、拡大するほどハンドルが指から離れていく（余白は拡大されないため）。
-  const px=(fx===0)? pt.x+SEL_PAD : (fx===1)? pt.x-SEL_PAD : pt.x;
-  const py=(fy===0)? pt.y+SEL_PAD : (fy===1)? pt.y-SEL_PAD : pt.y;
+  let px=(fx===0)? pt.x+SEL_PAD : (fx===1)? pt.x-SEL_PAD : pt.x;
+  let py=(fy===0)? pt.y+SEL_PAD : (fy===1)? pt.y-SEL_PAD : pt.y;
+  // 方眼への吸着（v8.9）。余白を戻したあとに丸める（先に丸めると余白ぶんずれる）
+  const g=step||0;
+  if(g){ px=Math.round(px/g)*g; py=Math.round(py/g)*g; }
   let sx=1, sy=1;
   if(fx!==.5){
     const ox=(fx===0)?b.x1:b.x0;                       // 掴んだ側の反対＝固定点
@@ -4044,14 +4130,24 @@ function snapAngle(x1,y1,x2,y2){
   const ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4);
   return {x:x1+dist*Math.cos(ang), y:y1+dist*Math.sin(ang)};
 }
+/* 方眼への吸着（v8.9）。方眼は白紙の画像に焼き込んだ絵なので、アプリは間隔を知らない。
+   作成時に持たせた d.gridUnit（キャンバス座標での1マス）だけが手がかり。
+   持っていない図面（取り込み／v8.9より前の白紙）は 0 を返す＝吸着しない。 */
+function gridUnitOf(d){ return (d && d.blank && d.gridUnit>0) ? d.gridUnit : 0; }
+function gridSnapStep(){ return effectiveShift() ? gridUnitOf(dwg()) : 0; }
+function snapGridPt(pt){ const g=gridSnapStep();
+  return g ? {x:Math.round(pt.x/g)*g, y:Math.round(pt.y/g)*g} : pt; }
+// 移動はマス単位（＝方眼に乗っている図形が、乗ったまま動く）
+function snapGridDelta(v){ const g=gridSnapStep(); return g ? Math.round(v/g)*g : v; }
 function updatePolyHover(clientX,clientY){
   if(!polyDraft || !overSheet(clientX,clientY)){ if(hoverPt){hoverPt=null;redrawInk();} return; }
-  const pt=toCanvas(clientX,clientY);
+  const pt=snapGridPt(toCanvas(clientX,clientY)); // 先に方眼へ、そのあと角度
   const last=polyDraft.pts[polyDraft.pts.length-1];
   hoverPt=effectiveShift()?snapAngle(last.x,last.y,pt.x,pt.y):pt;
   redrawInk();
 }
 function addPolyPoint(pt){
+  pt=snapGridPt(pt);            // 1点目も方眼へ（始点がずれると以降すべてずれる）
   if(!polyDraft){
     polyDraft={type:'poly',pts:[pt],color:state.inkColor,width:state.inkWidth,dash:state.inkDash};
     (strokes[inkKey()]=strokes[inkKey()]||[]).push(polyDraft);
@@ -4120,7 +4216,8 @@ vp.addEventListener('pointerdown',e=>{
     deselectShape();
     if(!isPoly){
       const style={color:state.inkColor,width:state.inkWidth,dash:state.inkDash,fill:state.inkFill};
-      curItem={type:state.shapeType||'rect', x1:pt.x, y1:pt.y, x2:pt.x, y2:pt.y, ...style};
+      const sp=snapGridPt(pt);  // 始点も方眼へ（終点だけ合わせても寸法が半端になる）
+      curItem={type:state.shapeType||'rect', x1:sp.x, y1:sp.y, x2:sp.x, y2:sp.y, ...style};
       (strokes[inkKey()]=strokes[inkKey()]||[]).push(curItem);
       redoStrokes[inkKey()]=[];
     } else {
@@ -4183,14 +4280,14 @@ vp.addEventListener('pointermove',e=>{
     if(dragMode.mode==='selscale'){
       if(!dragMode.armed){ if(Math.abs(e.clientX-dragMode.sx)<4 && Math.abs(e.clientY-dragMode.sy)<4) return; dragMode.armed=true; }
       const p2=toCanvas(e.clientX,e.clientY);
-      const f=selScaleFactors(dragMode,p2,effectiveShift());
+      const f=selScaleFactors(dragMode,p2,effectiveShift(),gridSnapStep());
       selMulti.forEach((it,i)=>scaleItemFrom(it,selMoveOrig[i],f.ox,f.oy,f.sx,f.sy));
       redrawInk(); return;
     }
     if(dragMode.mode==='selmove'){
       if(!dragMode.armed){ if(Math.abs(e.clientX-dragMode.sx)<5 && Math.abs(e.clientY-dragMode.sy)<5) return; dragMode.armed=true; }
       const p2=toCanvas(e.clientX,e.clientY);
-      const dx=p2.x-dragMode.startPt.x, dy=p2.y-dragMode.startPt.y;
+      const dx=snapGridDelta(p2.x-dragMode.startPt.x), dy=snapGridDelta(p2.y-dragMode.startPt.y);
       selMulti.forEach((it,i)=>moveItemBy(it,dx,dy,selMoveOrig[i]));
       redrawInk(); return;
     }
@@ -4201,7 +4298,8 @@ vp.addEventListener('pointermove',e=>{
         if(Math.abs(e.clientX-dragMode.sx)<5 && Math.abs(e.clientY-dragMode.sy)<5) return;
         dragMode.armed=true;
       }
-      const dx=pt.x-dragMode.startPt.x, dy=pt.y-dragMode.startPt.y;
+      // 移動はマス単位。方眼に乗っている図形が、乗ったまま動く
+      const dx=snapGridDelta(pt.x-dragMode.startPt.x), dy=snapGridDelta(pt.y-dragMode.startPt.y);
       if(item.type==='poly'){
         item.pts.forEach((q,i)=>{ q.x=dragMode.orig.pts[i].x+dx; q.y=dragMode.orig.pts[i].y+dy; });
       } else {
@@ -4209,14 +4307,14 @@ vp.addEventListener('pointermove',e=>{
         item.x2=dragMode.orig.x2+dx; item.y2=dragMode.orig.y2+dy;
       }
     } else { // resize
-      const h=dragMode.handle;
+      const h=dragMode.handle, rp=snapGridPt(pt); // 掴んだ角・点を方眼の交点へ
       if(item.type==='rect'||item.type==='ellipse'){
-        if(h==='nw'){item.x1=pt.x;item.y1=pt.y;} else if(h==='ne'){item.x2=pt.x;item.y1=pt.y;}
-        else if(h==='sw'){item.x1=pt.x;item.y2=pt.y;} else {item.x2=pt.x;item.y2=pt.y;}
+        if(h==='nw'){item.x1=rp.x;item.y1=rp.y;} else if(h==='ne'){item.x2=rp.x;item.y1=rp.y;}
+        else if(h==='sw'){item.x1=rp.x;item.y2=rp.y;} else {item.x2=rp.x;item.y2=rp.y;}
       } else if(item.type==='poly'){
-        const idx=+h.slice(1); item.pts[idx].x=pt.x; item.pts[idx].y=pt.y;
+        const idx=+h.slice(1); item.pts[idx].x=rp.x; item.pts[idx].y=rp.y;
       } else {
-        if(h==='p1'){item.x1=pt.x;item.y1=pt.y;} else {item.x2=pt.x;item.y2=pt.y;}
+        if(h==='p1'){item.x1=rp.x;item.y1=rp.y;} else {item.x2=rp.x;item.y2=rp.y;}
       }
     }
     redrawInk(); return;
@@ -4237,17 +4335,21 @@ vp.addEventListener('pointermove',e=>{
       if(pev){ for(const pe of pev){ const cp=toCanvas(pe.clientX,pe.clientY); predictTail.push({x:cp.x,y:cp.y,p: pe.pressure>0?pe.pressure:0.5}); } }
       scheduleFreeDraw(); return; // 描画は1フレーム1回にまとめ、入力(ペンの着地/離れ)の取りこぼしを減らす
     } else if(curItem.type==='rect'||curItem.type==='ellipse'){
+      // 先に方眼へ吸着 → そのあと正方形・正円の固定。目が縦横同じなので1辺も方眼の整数倍になる
+      const gp=snapGridPt(pt);
       if(effectiveShift()){
-        const dx=pt.x-curItem.x1, dy=pt.y-curItem.y1;
+        const dx=gp.x-curItem.x1, dy=gp.y-curItem.y1;
         const side=Math.max(Math.abs(dx),Math.abs(dy));
         curItem.x2=curItem.x1+(dx<0?-side:side);
         curItem.y2=curItem.y1+(dy<0?-side:side);
-      } else { curItem.x2=pt.x; curItem.y2=pt.y; }
+      } else { curItem.x2=gp.x; curItem.y2=gp.y; }
     } else { // line / arrow
+      const gp=snapGridPt(pt);
       if(effectiveShift()){
-        const s=snapAngle(curItem.x1,curItem.y1,pt.x,pt.y);
+        // 45°を優先するので、斜めの端点は目からわずかに外れる（斜辺が√2倍のため）
+        const s=snapAngle(curItem.x1,curItem.y1,gp.x,gp.y);
         curItem.x2=s.x; curItem.y2=s.y;
-      } else { curItem.x2=pt.x; curItem.y2=pt.y; }
+      } else { curItem.x2=gp.x; curItem.y2=gp.y; }
     }
     redrawInk(); return;
   }
@@ -7006,6 +7108,15 @@ pannoCanvas.addEventListener('pointerdown',e=>{
     }
   }
 });
+/* 写真の外をタップしたら連続線を終える（v8.8）。図面側の「図面の外をタップしたら終わる」と同じ。
+   pannoCanvas は写真ぴったりを覆っているので、写真の外のタップはキャンバスには届かない。
+   1つ外側のステージで拾い、写真の上でないときだけ終える。 */
+$('#pannoStage').addEventListener('pointerdown',e=>{
+  if(!pannoPolyDraft) return;                  // 作図中でなければ何もしない
+  if(e.target.closest('#pannoHolder')) return; // 写真の上＝キャンバス側の処理に任せる
+  if(pannoPointers.size) return;               // 写真に指が触れている＝ピンチの途中かもしれない
+  finishPannoPoly();
+});
 pannoCanvas.addEventListener('pointermove',e=>{
   if(pannoPointers.has(e.pointerId)) pannoPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(pannoPointers.size>=2){ pannoUpdateGesture(); return; } // 2本指＝ズーム/パン
@@ -7737,8 +7848,11 @@ function renderPhotoGrid(){
   if(!groups.length) html+=`<div class="pg-hint">「区分を追加」で分類（例：調査／工事前／工事後）を作り、写真を長押しして区分へドラッグできます。</div>`;
   const UP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>';
   const DN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
-  const section=(title,gid,cells)=>{
-    html+=`<div class="pg-section" data-gid="${gid||''}"><div class="pg-head"><span class="pg-name">${escHtml(title)}</span><span class="pg-tools">`;
+  // n は区分の中の枚数（見出しのチップに出す）。畳む機能は台帳側だけなので、ここでは表示のみ
+  const section=(title,gid,cells,n)=>{
+    html+=`<div class="pg-section${gid?'':' uncat'}" data-gid="${gid||''}"><div class="pg-head">`
+      +`<span class="pg-title"><span class="pg-name">${escHtml(title)}</span>`
+      +`<span class="pg-cnt">${n|0}</span></span><span class="pg-tools">`;
     if(gid){
       // 区分が1つだけなら並べ替えようがないので出さない（「未分類」は常に最後で並べ替え対象外）
       const gi=groups.findIndex(x=>x.id===gid);
@@ -7750,8 +7864,8 @@ function renderPhotoGrid(){
     }
     html+=`<button class="pg-add" data-gadd="${gid||''}">＋写真</button></span></div><div class="photo-grid">${cells||'<div class="pg-empty">写真なし</div>'}</div></div>`;
   };
-  groups.forEach(gp=>section(gp.name,gp.id,bucket[gp.id].map(cell).join('')));
-  if(groups.length||uncat.length||emptySlots.length) section('未分類',null,uncat.map(cell).join('')+emptySlots.map(emptyCell).join(''));
+  groups.forEach(gp=>section(gp.name,gp.id,bucket[gp.id].map(cell).join(''),bucket[gp.id].length));
+  if(groups.length||uncat.length||emptySlots.length) section('未分類',null,uncat.map(cell).join('')+emptySlots.map(emptyCell).join(''),uncat.length+emptySlots.length);
   g.innerHTML=html;
   applyComposited(g); // 注釈があれば合成画像をサムネイルに反映
   g.querySelectorAll('img.lphoto-img').forEach(im=>im.addEventListener('click',()=>{ if(Date.now()-lastPhotoDragEnd<350) return; openLightbox(compositeCache[im.dataset.src]||im.dataset.src, im.dataset.src); }));
@@ -8176,7 +8290,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v8.6';
+const APP_BUILD='v8.9';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの
@@ -8353,13 +8467,15 @@ $('#impScrim').addEventListener('click',e=>{ if(e.target.id==='impScrim') closeI
    以降は取り込み図面とまったく同じ経路（sheetSrc の img 表示・図面ごとの sheetW/sheetH）に乗る。
    縮尺は未設定（DEFAULT_MM_PER_UNIT のまま／校正するまで計測は目安）。 */
 const A_SIZES_MM={A4:{long:297,short:210}, A3:{long:420,short:297}};
+const BLANK_GRID_DEFAULT_MM=5; // 方眼の既定（v8.9で10mm→5mm。作成時に選べる）
 const BLANK_LONG_PX=1600; // 長辺の描画解像度（座標系正規化と同値でファイルを軽く保つ）
 function blankDimsMM(size,orient){
   const s=A_SIZES_MM[size]||A_SIZES_MM.A4;
   return orient==='port' ? {w:s.short,h:s.long} : {w:s.long,h:s.short};
 }
 function blankSizeLabel(size,orient){ return `${size}${orient==='port'?'縦':'横'}`; }
-function generateBlankSheet(size,orient){
+function generateBlankSheet(size,orient,gridMM){
+  gridMM=+gridMM>0 ? +gridMM : BLANK_GRID_DEFAULT_MM;
   const mm=blankDimsMM(size,orient);
   const pxPerMm=BLANK_LONG_PX/Math.max(mm.w,mm.h);
   const W=Math.round(mm.w*pxPerMm), H=Math.round(mm.h*pxPerMm);
@@ -8371,19 +8487,21 @@ function generateBlankSheet(size,orient){
     for(let x=step; x<W; x+=step){ const px=Math.round(x)+0.5; c.beginPath(); c.moveTo(px,0); c.lineTo(px,H); c.stroke(); }
     for(let y=step; y<H; y+=step){ const py=Math.round(y)+0.5; c.beginPath(); c.moveTo(0,py); c.lineTo(W,py); c.stroke(); }
   };
+  if(gridMM<10) drawGrid(gridMM,'#EDF1F5',1); // 極細（5mm等）。薄くしないと図面の線が読みづらい
   drawGrid(10,'#E4E8ED',1);   // 細線 10mm
   drawGrid(50,'#C6CDD6',1.4); // 太線 50mm
   c.lineWidth=2; c.strokeStyle='#AEB6C0'; c.strokeRect(1,1,W-2,H-2); // 外枠
-  return {src:cv.toDataURL('image/png'), w:W, h:H};
+  return {src:cv.toDataURL('image/png'), w:W, h:H, gridMM};
 }
 let blkLastAutoName='';
-function currentBlank(){ return generateBlankSheet($('#blkSize').value,$('#blkOrient').value); }
+function blankGridMM(){ return +($('#blkGrid').value||BLANK_GRID_DEFAULT_MM); }
+function currentBlank(){ return generateBlankSheet($('#blkSize').value,$('#blkOrient').value,blankGridMM()); }
 function updateBlankPreview(){
   const size=$('#blkSize').value, orient=$('#blkOrient').value;
-  const b=generateBlankSheet(size,orient);
+  const b=generateBlankSheet(size,orient,blankGridMM());
   $('#blkPreview').innerHTML=`<img src="${b.src}" alt="プレビュー">`;
   const u=sheetUnits(b.w,b.h);
-  $('#blkMeta').textContent=`${blankSizeLabel(size,orient)} · 方眼10mm · 座標系 ${u.w}×${u.h}`;
+  $('#blkMeta').textContent=`${blankSizeLabel(size,orient)} · 方眼${b.gridMM}mm · 座標系 ${u.w}×${u.h}`;
   // 図面名がまだ自動値のままなら、サイズ変更に追従して更新
   const auto='白紙 '+blankSizeLabel(size,orient);
   if(!$('#blkName').value || $('#blkName').value===blkLastAutoName){ $('#blkName').value=auto; }
@@ -8394,7 +8512,7 @@ function openBlankDialog(){
   $('#blkGroup').innerHTML=groups.map(g=>`<option value="${g}">${g}</option>`).join('')+'<option value="__new">＋ 新しい分類…</option>';
   $('#blkGroupNewRow').style.display='none';
   $('#blkGroupNew').value='';
-  $('#blkSize').value='A4'; $('#blkOrient').value='land';
+  $('#blkSize').value='A4'; $('#blkOrient').value='land'; $('#blkGrid').value=String(BLANK_GRID_DEFAULT_MM);
   $('#blkFloor').value='';
   blkLastAutoName=''; $('#blkName').value='';
   updateBlankPreview();
@@ -8410,8 +8528,13 @@ async function commitBlank(){
   const floor=($('#blkFloor').value||'').trim()||'—';
   const u=sheetUnits(b.w,b.h);
   const id='u'+(++dwgSeq);
+  // 方眼の位置は画像に焼かれていてデータに無いので、1マスの大きさを座標系の単位で持たせる。
+  // 方眼は用紙幅を「用紙幅mm ÷ 方眼mm」等分に引いてあるので、この式が線の位置と一致する。
+  const gmm=blankDimsMM($('#blkSize').value,$('#blkOrient').value);
+  const gridUnit=u.w*b.gridMM/gmm.w;
   drawings.push({
     id,name,group,floor,cached:true,seenNew:false,blank:true,
+    gridMM:b.gridMM, gridUnit,
     mmPerUnit:DEFAULT_MM_PER_UNIT, sheetSrc:b.src, sheetW:u.w, sheetH:u.h,
     versions:[{v:'1',status:'work',date:todayStr().replace(/-/g,'/'),note:'',diff:{tag:'REV.1.0'}}],
   });
@@ -8424,6 +8547,7 @@ async function commitBlank(){
 $('#btnBlankDwg').addEventListener('click',openBlankDialog);
 $('#blkSize').addEventListener('change',updateBlankPreview);
 $('#blkOrient').addEventListener('change',updateBlankPreview);
+$('#blkGrid').addEventListener('change',updateBlankPreview);
 $('#blkGroup').addEventListener('change',e=>{ $('#blkGroupNewRow').style.display = e.target.value==='__new' ? '' : 'none'; });
 $('#blkClose').addEventListener('click',closeBlankDialog);
 $('#blkCancel').addEventListener('click',closeBlankDialog);

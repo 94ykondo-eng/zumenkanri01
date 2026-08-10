@@ -1313,6 +1313,22 @@
        [UI] 各写真の「台帳に載せる」の左に ← → を置いた。端では薄くして押せなくする。
        区分の並べ替え（v7.95/v8.2）と同じくボタン式にした。iPadでの長押しドラッグは、
        写真の分類ドラッグ（v7.73）と操作がぶつかるため。
+  build v8.6 (写真台帳で長押しドラッグして好きな位置へ)  —
+       [作り] ピンの写真画面のD&D（v7.71/v7.73）と同じ作りを台帳にも入れた。違いは落とし先で、
+       あちらは「区分へ放り込む」だけ、こちらは「どの写真の前か」まで見て差し込む。
+       長押し240ms・移動10pxまではスクロール扱い・端で自動スクロール・ゴースト表示は同じ。
+       [落とし位置の求め方] 格子並びなので、指にいちばん近いセルを選び、その中心より左なら手前・
+       右なら次に差し込む。空の区分に落としたときは、その区分の末尾へ。
+       [区分をまたげる] 別の区分の場所へ落とすと分類も変わる。分類の変更と並びの変更を別々に
+       ログへ残す（あとから「いつ区分が変わったか」を分類で辿れるようにするため）。
+       [ボタンは残す] ← → は残した。ドラッグは速いが、狙った1つ隣へ確実に動かすのはボタンが早い。
+       手袋や揺れる足場では長押しが安定しないこともある。
+       [iOSの前提] スクロールを止められるのは非パッシブ touchmove の preventDefault だけ、という
+       v7.73 の教訓はここでも同じ。pointerdown の時点で登録しておく必要がある。
+       [取り消し対策] pointercancel でも「掴んでいたなら最後の位置へ落とす」。OS都合の取り消しで
+       移動が消えるのを防ぐ（v7.73と同じ方針）。運び終えた直後のタップでは拡大表示を出さない。
+       [別のピンへは運べない] 落とし先が別のピンなら何もしない。ピンをまたぐ移動は写真の持ち主が
+       変わる話で、並べ替えとは別物のため。
 -->
 <html lang="ja">
 <head>
@@ -2302,6 +2318,13 @@
   .lphoto-led svg{width:15px;height:15px;flex-shrink:0;pointer-events:none}
   .lgrp-photos{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
   .lphoto{background:var(--panel2);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+  /* 長押しドラッグ：掴んだ元セルは淡く、落とす位置は縁で示す（レイアウトを動かさない） */
+  .lphoto.ld-src{opacity:.32}
+  .lphoto.ld-before{box-shadow:inset 5px 0 0 0 var(--signal)}
+  .lphoto.ld-after{box-shadow:inset -5px 0 0 0 var(--signal)}
+  .lgrp-photos.ld-drop,.lphotos.ld-drop{outline:2px dashed var(--signal);outline-offset:4px;border-radius:12px}
+  /* ドラッグ中だけ台帳のスクロールを止める（iOSは touchmove の preventDefault でしか止まらない） */
+  .ledger.ld-dragging .ledger-body{touch-action:none;overscroll-behavior:contain}
   .lphoto-imgwrap{position:relative}
   .lphoto-img{width:100%;aspect-ratio:4/3;object-fit:cover;display:block;background:var(--panel3);cursor:pointer;
     -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
@@ -2435,7 +2458,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="写真台帳で写真の順序を入れ替え">build v8.5</button>
+          data-desc="写真台帳で長押しドラッグして好きな位置へ">build v8.6</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -3481,6 +3504,19 @@ function pinPhotoItems(p,dwgId){
   unplannedPhotos(did,p).forEach(src=>
     items.push({src, slot:null, no:0, orderKey:photoOrderKey(p,null,src), gid:normGid(p,src)}));
   return sortByPhotoOrder(p,items);
+}
+/* key の写真を beforeKey の直前へ差し込む（beforeKey が null なら末尾へ）。長押しドラッグ用。
+   表示は「区分ごとに分けたあと、この並び順」で出すので、同じ区分の中での前後関係だけが効く。 */
+function movePhotoTo(p,items,key,beforeKey){
+  const keys=(items||[]).filter(it=>it.orderKey).map(it=>it.orderKey);
+  const i=keys.indexOf(key);
+  if(i<0) return false;
+  keys.splice(i,1);
+  let j = beforeKey ? keys.indexOf(beforeKey) : -1;
+  if(j<0) j=keys.length;              // 相手が見つからない／末尾に置いた
+  keys.splice(j,0,key);
+  p.photoOrder=keys;
+  return true;
 }
 /* 隣と入れ替える。いま表示されている順をそのまま書き出してから入れ替えるので、
    まだ並べ替えていない写真や、消えた写真の古いキーが混ざっていても辻褄が合う（掃除も兼ねる）。
@@ -4936,7 +4972,7 @@ function photoCellHtml(src, slot, no, pin, ord){
       <input type="text" data-src="${escAttr(src)}" data-li="${li}" value="${escAttr(ln)}" placeholder="記入（使用部材・数量・施工内容など）">
       <button class="lphoto-line-rm" data-src="${escAttr(src)}" data-li="${li}" title="この行を削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
     </div>`).join('');
-  return `<div class="lphoto${off?' led-off':''}">
+  return `<div class="lphoto${off?' led-off':''}"${ord&&ord.key?` data-okey="${escAttr(ord.key)}" data-osrc="${escAttr(src)}"`:''}>
     <div class="lphoto-imgwrap">
       <img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" alt="現場写真">
       ${slot?`<span class="lphoto-tag done">枠 ${no}・撮影済</span>`:''}
@@ -5078,6 +5114,7 @@ function bindLedger(){
   applyComposited(body);
   // 写真タップで拡大（注釈があれば合成画像を、なければ元写真を表示）
   body.querySelectorAll('.lphoto-img').forEach(im=>im.addEventListener('click',()=>{
+    if(Date.now()-lastLedgerDragEnd<350) return;   // 運び終えた直後のタップで拡大表示を出さない
     const src=im.dataset.src;
     openLightbox(compositeCache[src]||src, src);
   }));
@@ -7787,6 +7824,142 @@ function renderPhotoGrid(){
 }
 $('#btnAddPhoto').addEventListener('click',()=>{ const p=curPinObj(); if(!p)return; const n=prompt('区分の名前を入力（例：調査／工事前／工事後）',''); if(n&&n.trim()){ (p.groups=p.groups||[]).push({id:newGid(),name:n.trim()}); pinLog(p,'group','区分',`「${n.trim()}」を追加`); renderPhotoGrid(); } });
 
+/* ==== 写真台帳：長押しドラッグで好きな位置へ移動（v8.6）====
+   ピンの写真画面のD&D（v7.71/v7.73）と同じ作りを台帳にも。違いは落とし先で、
+   あちらは「区分へ放り込む」だけ、こちらは「どの写真の前か」まで見て差し込む。
+   区分をまたいで落としたら分類も変える（＝好きな場所へ運べる）。
+   iOSでスクロールを止められるのは非パッシブ touchmove の preventDefault だけ、という
+   v7.73 の教訓はここでも同じ。 */
+let ldrag=null, lastLedgerDragEnd=0;
+const LD_EDGE=76, LD_SPEED=16, LD_HOLD=240, LD_SLOP=10;
+$('#ledgerBody').addEventListener('pointerdown',e=>{
+  const img=e.target.closest('img.lphoto-img'); if(!img) return;
+  const cell=img.closest('.lphoto[data-okey]'); if(!cell) return;
+  const sec=cell.closest('.lsec'); if(!sec) return;
+  ldrag={ key:cell.dataset.okey, src:cell.dataset.osrc, thumb:img.src, cell, pinId:sec.dataset.pin,
+          sx:e.clientX, sy:e.clientY, x:e.clientX, y:e.clientY, active:false, raf:0 };
+  ldrag.timer=setTimeout(beginLedgerDrag,LD_HOLD);   // すぐ動かせばスクロール扱い
+  window.addEventListener('pointermove',ledgerDragMove,{passive:false});
+  window.addEventListener('touchmove',ledgerTouchMove,{passive:false});
+  window.addEventListener('pointerup',ledgerDragUp);
+  window.addEventListener('pointercancel',ledgerDragCancel);
+});
+function ledgerTouchMove(e){ if(ldrag&&ldrag.active&&e.cancelable) e.preventDefault(); }
+function beginLedgerDrag(){
+  if(!ldrag) return;
+  ldrag.active=true;
+  const g=document.createElement('div'); g.className='photo-ghost'; g.innerHTML=`<img src="${ldrag.thumb}">`;
+  document.body.appendChild(g); ldrag.ghost=g; moveLedgerGhost();
+  ldrag.cell.classList.add('ld-src');
+  const l=$('#ledger'); if(l) l.classList.add('ld-dragging');
+  ldrag.raf=requestAnimationFrame(ledgerDragTick);
+  highlightLedgerDrop(ldrag.x,ldrag.y);
+  if(navigator.vibrate){ try{navigator.vibrate(10);}catch(_){} }
+}
+function moveLedgerGhost(){ if(ldrag&&ldrag.ghost){ ldrag.ghost.style.left=ldrag.x+'px'; ldrag.ghost.style.top=ldrag.y+'px'; } }
+/* 指の下から「どの入れ物の・どの写真の前か」を求める。
+   格子並びなので、いちばん近いセルを選び、その中心より左なら手前・右なら次に差し込む。 */
+function ledgerDropAt(x,y){
+  if(!ldrag) return null;
+  if(ldrag.ghost) ldrag.ghost.style.display='none';
+  const el=document.elementFromPoint(x,y);
+  if(ldrag.ghost) ldrag.ghost.style.display='';
+  if(!el||!el.closest) return null;
+  const sec=el.closest('.lsec'); if(!sec||sec.dataset.pin!==ldrag.pinId) return null; // 別のピンへは運ばない
+  const box=el.closest('.lgrp-photos')||el.closest('.lphotos'); if(!box) return null;
+  const raw=box.dataset.gbody;
+  const gid=(raw===undefined||raw===''||String(raw).indexOf('un:')===0)?null:raw;
+  const cells=[...box.querySelectorAll('.lphoto[data-okey]')].filter(c=>c!==ldrag.cell);
+  if(!cells.length) return {gid, beforeKey:null, box, marker:null, after:false};
+  let best=null, bestD=Infinity;
+  cells.forEach((c,k)=>{
+    const r=c.getBoundingClientRect(), cx=r.left+r.width/2, cy=r.top+r.height/2;
+    const d=Math.hypot(x-cx,y-cy);
+    if(d<bestD){ bestD=d; best={c,k,cx}; }
+  });
+  const after = x>=best.cx;
+  const nextCell = after ? cells[best.k+1] : cells[best.k];
+  return {gid, beforeKey: nextCell?nextCell.dataset.okey:null, box, marker:best.c, after};
+}
+function clearLedgerDropMarks(){
+  document.querySelectorAll('.lphoto.ld-before,.lphoto.ld-after').forEach(c=>c.classList.remove('ld-before','ld-after'));
+  document.querySelectorAll('.ld-drop').forEach(c=>c.classList.remove('ld-drop'));
+}
+function highlightLedgerDrop(x,y){
+  clearLedgerDropMarks();
+  const t=ledgerDropAt(x,y); if(!t) return null;
+  if(t.marker) t.marker.classList.add(t.after?'ld-after':'ld-before');
+  else if(t.box) t.box.classList.add('ld-drop');   // 空の区分へ落とすとき
+  return t;
+}
+// 上端・下端に近づけたら台帳を自動スクロール（画面外の区分へも運べるように）
+function ledgerDragTick(){
+  if(!ldrag||!ldrag.active) return;
+  const bd=$('#ledgerBody');
+  if(bd){
+    const r=bd.getBoundingClientRect(); let d=0;
+    if(ldrag.y<r.top+LD_EDGE)         d=-LD_SPEED*Math.min(1,(r.top+LD_EDGE-ldrag.y)/LD_EDGE);
+    else if(ldrag.y>r.bottom-LD_EDGE) d= LD_SPEED*Math.min(1,(ldrag.y-(r.bottom-LD_EDGE))/LD_EDGE);
+    if(d){ const before=bd.scrollTop; bd.scrollTop=before+d; if(bd.scrollTop!==before) highlightLedgerDrop(ldrag.x,ldrag.y); }
+  }
+  ldrag.raf=requestAnimationFrame(ledgerDragTick);
+}
+function ledgerDragMove(e){
+  if(!ldrag) return;
+  ldrag.x=e.clientX; ldrag.y=e.clientY;
+  if(!ldrag.active){ if(Math.abs(e.clientX-ldrag.sx)>LD_SLOP||Math.abs(e.clientY-ldrag.sy)>LD_SLOP) endLedgerDrag(false); return; }
+  if(e.cancelable) e.preventDefault();
+  moveLedgerGhost(); highlightLedgerDrop(e.clientX,e.clientY);
+}
+function dropLedgerPhotoAt(x,y){
+  const t=ledgerDropAt(x,y); if(!t) return false;
+  const p=(pins[ledgerDwgId]||[]).find(z=>z.id===ldrag.pinId); if(!p) return false;
+  const src=ldrag.src, key=ldrag.key;
+  const before=normGid(p,src);
+  const gname=g=>g?(((p.groups||[]).find(x=>x.id===g)||{}).name||'区分'):'未分類';
+  const moved=movePhotoTo(p,pinPhotoItems(p,ledgerDwgId),key,t.beforeKey);
+  const gidChanged=(t.gid||null)!==(before||null);
+  if(gidChanged) setPhotoGid(p,src,t.gid);
+  endLedgerDrag(true);
+  if(gidChanged) pinLog(p,'classify',photoName(p,src,ledgerDwgId),`${gname(before)} → ${gname(t.gid)}`);
+  if(moved||gidChanged) pinLog(p,'order',photoName(p,src,ledgerDwgId),'ドラッグで移動');
+  rerenderLedgerFromDrag(); renderPhotoGrid(); renderPinLog();
+  return true;
+}
+// 台帳を作り直す（見ていた位置は保つ）。renderLedger の中の再描画ヘルパは外から呼べないのでここに置く。
+function rerenderLedgerFromDrag(){
+  const bd=$('#ledgerBody'); const y=bd?bd.scrollTop:0;
+  renderLedger();
+  const nb=$('#ledgerBody'); if(nb) nb.scrollTop=y;
+}
+function ledgerDragUp(e){
+  if(!ldrag) return;
+  if(ldrag.active && dropLedgerPhotoAt(e.clientX,e.clientY)) return;
+  endLedgerDrag(ldrag.active);
+}
+// OS都合で取り消されても、掴んでいたなら最後の位置へ落とす（移動が消えないように）
+function ledgerDragCancel(){
+  if(!ldrag) return;
+  if(ldrag.active && dropLedgerPhotoAt(ldrag.x,ldrag.y)) return;
+  endLedgerDrag(ldrag.active);
+}
+function endLedgerDrag(wasActive){
+  if(ldrag){
+    clearTimeout(ldrag.timer);
+    if(ldrag.raf) cancelAnimationFrame(ldrag.raf);
+    if(ldrag.ghost) ldrag.ghost.remove();
+    if(ldrag.cell) ldrag.cell.classList.remove('ld-src');
+  }
+  const l=$('#ledger'); if(l) l.classList.remove('ld-dragging');
+  clearLedgerDropMarks();
+  window.removeEventListener('pointermove',ledgerDragMove);
+  window.removeEventListener('touchmove',ledgerTouchMove);
+  window.removeEventListener('pointerup',ledgerDragUp);
+  window.removeEventListener('pointercancel',ledgerDragCancel);
+  if(wasActive) lastLedgerDragEnd=Date.now();
+  ldrag=null;
+}
+
 // ==== 写真を長押しドラッグで区分へ移動（iPadタッチ対応の独自D&D）====
 let pdrag=null, lastPhotoDragEnd=0;
 const PG_EDGE=76, PG_SPEED=16;   // 端からの距離(px) と 1フレームの自動スクロール量
@@ -8003,7 +8176,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v8.5';
+const APP_BUILD='v8.6';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの

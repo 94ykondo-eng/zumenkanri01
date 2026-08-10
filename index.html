@@ -1279,6 +1279,40 @@
        [再描画しない] その場で hidden を付け外しするだけ。作り直すと見ていた位置がずれる。
        なお .lgrp-photos は display:grid を持つため、hidden 属性だけでは消えない
        （.lgrp-photos[hidden]{display:none} が要る）。
+  build v8.4 (写真の連続線を図面と同じ振る舞いに)  —
+       [症状] 写真に連続線を引こうとすると、拡大しているときに次の点を打つつもりで線が終わる／
+       ピンチするたびに点が増える／狙った場所に点が置けない。図面側の連続線とは別実装になっており、
+       3か所ちがっていた。実測して切り分けた（investigate_poly*.py）。
+       [①終了判定が拡大率に連動していた（主因）] 「同じ場所を2回タップで終了」の判定を、写真側だけ
+       キャンバスの論理座標(12単位)で測っていた。論理座標は拡大しても変わらないので、画面上の距離に
+       直すと倍率で伸び縮みする。実測：1倍→6px、2倍→14px、4倍→80px超。つまり拡大するほど
+       「離れた場所を打っても終了と判定される」。図面側は画面px(16px)なので倍率に依存しない。
+       → POLY_TAP_PX=16 / POLY_TAP_MS=400 として画面px・ミリ秒で判定する。
+       [②点が指を置いた瞬間に確定していた] 図面側は指を離した位置で確定する（押しながら動かして
+       狙いを定め、離して確定）。写真側は pointerdown で即確定していたため狙えず、ラバーバンドも
+       点が決まった後にしか出ないので目安にならなかった。→ pannoPolyPending を置き、pointerup で確定。
+       [③ピンチの1本目で点が入っていた] 図面側は2本目の指が触れた時点で保留を取り消す
+       （polyPending=false）。写真側は既に点を追加済みだったので、拡大するたび不要な点が1つ増えた。
+       → 2本指になった時点で pannoPolyPending=false。
+       [おまけ] 終了のダブルタップでは点を追加しないようにした（図面側は追加してから近すぎる点を
+       削っている）。追加しないほうが、削り残しの短い線分が出ない。
+       [ついでに] pannoCanvas.setPointerCapture を try で囲んだ。ここで例外が出ると pointerdown の
+       処理が丸ごと止まり、ツールが何も反応しなくなる。捕捉できなくても描けたほうがよい。
+  build v8.5 (写真台帳で写真の順序を入れ替え)  —
+       [持ち方] ピンごとに「表示順のキー」の配列 p.photoOrder を持つ。キーは 枠のある写真なら
+       '#'+枠ID、枠のない写真なら 'n'+通し番号（v8.0で入れた ledgerPhotoMeta[src].no）。
+       **写真のdataURLをキーにしない**のが要点で、①保存JSONが膨らまない
+       ②写真を回しても並びが崩れない（回転は src を作り直すため）。
+       [並べ替えの単位] 同じ区分の中だけ。区分をまたぐ移動は「分類を変える」操作なので別物として
+       扱う（間に別の区分の写真が挟まっていても、同じ区分の次の相手まで飛ばして入れ替える）。
+       [壊れにくくする] 入れ替えのたびに「いま表示されている順」をそのまま書き出してから入れ替える。
+       まだ並べ替えていない写真や、消した写真の古いキーが混ざっていても辻褄が合い、掃除も兼ねる。
+       並びに無い写真は元の順のまま後ろに付く（＝新しく撮った写真は末尾に入る）。
+       [3画面で同じ並びにする] pinPhotoItems() を唯一の入口にして、台帳・ピンの写真画面・
+       出力(ledgerCells) が同じ順を見る。画面ごとに並びが違うと、どれがどれか分からなくなる。
+       [UI] 各写真の「台帳に載せる」の左に ← → を置いた。端では薄くして押せなくする。
+       区分の並べ替え（v7.95/v8.2）と同じくボタン式にした。iPadでの長押しドラッグは、
+       写真の分類ドラッグ（v7.73）と操作がぶつかるため。
 -->
 <html lang="ja">
 <head>
@@ -1898,6 +1932,7 @@
   .pin-log-row.lg-ledger .pin-log-dot{background:#7A8794}
   .pin-log-row.lg-note .pin-log-dot{background:#7A8794}
   .pin-log-row.lg-name .pin-log-dot{background:#3BA6FF}
+  .pin-log-row.lg-order .pin-log-dot{background:#22C48A}
   .pin-log-label{flex:1;min-width:0;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pin-log-action{flex-shrink:0;font-size:11px;color:var(--muted2);font-family:var(--mono)}
   .pin-log-time{flex-shrink:0;font-size:11px;color:var(--muted2);font-family:var(--mono);margin-top:1px}
@@ -2255,7 +2290,13 @@
   /* 載せない写真は台帳画面には残す（消すとこの画面から戻せない）。出力には出さない。 */
   .lphoto.led-off .lphoto-imgwrap{opacity:.45;filter:grayscale(.55)}
   .lphoto.led-off .lphoto-body>*:not(.lphoto-led){opacity:.5}
-  .lphoto-led{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;padding:8px;border-radius:8px;
+  /* 並べ替えと「載せる/載せない」を1行にまとめる（この写真に対する操作をひとまとめに見せる） */
+  .lphoto-actions{display:flex;align-items:stretch;gap:6px}
+  .lphoto-ord{width:38px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:8px;
+    background:var(--panel3);border:1px solid var(--line2);color:var(--muted)}
+  .lphoto-ord svg{width:16px;height:16px;display:block;pointer-events:none}
+  .lphoto-ord[disabled]{opacity:.28;pointer-events:none}
+  .lphoto-led{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:7px;padding:8px;border-radius:8px;
     font-size:12px;font-weight:700;background:var(--panel3);border:1px solid var(--line2);color:var(--text)}
   .lphoto-led.off{background:rgba(240,68,56,.12);border-color:rgba(240,68,56,.45);color:#FF8A7F}
   .lphoto-led svg{width:15px;height:15px;flex-shrink:0;pointer-events:none}
@@ -2394,7 +2435,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="写真台帳で区分ごとにしまう">build v8.3</button>
+          data-desc="写真台帳で写真の順序を入れ替え">build v8.5</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -3402,6 +3443,60 @@ function setLgrpCollapsed(pinId,gid,on){
   let arr=[...ledgerCollapsed];
   if(arr.length>LGRP_MAX){ arr=arr.slice(arr.length-LGRP_MAX); ledgerCollapsed=new Set(arr); }
   lsSet(LS_LGRP,JSON.stringify(arr));
+}
+/* 写真の並び順。ピンごとに「表示順のキー」の配列（p.photoOrder）で持つ。
+   キーは 枠のある写真なら '#'+枠ID、枠のない写真なら 'n'+通し番号（ledgerPhotoMeta[src].no）。
+   枠IDは newSlot() が 'k'+連番 で作るので、記号を付けて写真側のキーと明確に分ける。
+   **写真のdataURLをキーにしない**のが要点：保存JSONが膨らまないし、写真を回して src が
+   変わっても並びが崩れない（回転は src を作り直すため）。
+   この並びは写真台帳の表示順であり、PDF・Excel の出力順そのもの。 */
+function photoOrderKey(p,slot,src){
+  if(slot) return '#'+slot.id;   // 枠は '#'+枠ID。写真側の 'n'+番号 と絶対にぶつからない形にする
+  if(!src) return null;
+  ensurePhotoNos(p);
+  const n=photoMeta(src).no;
+  return n?('n'+n):null;
+}
+// 消した区分に属したままの写真は「未分類」として扱う（並べ替えの相手を探すときに使う）
+function normGid(p,src){
+  const g=photoGid(p,src);
+  return (g && pinGroups(p).some(x=>x.id===g)) ? g : null;
+}
+// p.photoOrder の順に並べ替える。並びに無いもの（新しく撮った写真など）は元の順のまま後ろへ。
+function sortByPhotoOrder(p,items){
+  const ord=(p&&p.photoOrder)||null;
+  if(!ord||!ord.length) return items;
+  const rank=new Map();
+  ord.forEach((k,i)=>{ if(!rank.has(k)) rank.set(k,i); });
+  return items.map((it,i)=>({it,i,r:rank.has(it.orderKey)?rank.get(it.orderKey):Infinity}))
+              .sort((a,b)=>(a.r-b.r)||(a.i-b.i)).map(x=>x.it);
+}
+// このピンの写真を、表示（＝出力）と同じ並びで返す
+function pinPhotoItems(p,dwgId){
+  const did=dwgId||ledgerDwgId||state.selectedId;
+  const items=[];
+  planArr(did,p.id).forEach((sl,si)=>{
+    if(sl.src) items.push({src:sl.src, slot:sl, no:si+1, orderKey:photoOrderKey(p,sl,sl.src), gid:normGid(p,sl.src)});
+  });
+  unplannedPhotos(did,p).forEach(src=>
+    items.push({src, slot:null, no:0, orderKey:photoOrderKey(p,null,src), gid:normGid(p,src)}));
+  return sortByPhotoOrder(p,items);
+}
+/* 隣と入れ替える。いま表示されている順をそのまま書き出してから入れ替えるので、
+   まだ並べ替えていない写真や、消えた写真の古いキーが混ざっていても辻褄が合う（掃除も兼ねる）。
+   入れ替えるのは同じ区分の中だけ。区分をまたぐ移動は「分類を変える」操作なので別物。 */
+function movePhotoInOrder(p,items,key,dir){
+  const list=(items||[]).filter(it=>it.orderKey);
+  const i=list.findIndex(it=>it.orderKey===key);
+  if(i<0) return false;
+  const g=list[i].gid||null;
+  let j=i+dir;
+  while(j>=0 && j<list.length && (list[j].gid||null)!==g) j+=dir;  // 別の区分は飛ばす
+  if(j<0||j>=list.length) return false;
+  const keys=list.map(it=>it.orderKey);
+  const t=keys[i]; keys[i]=keys[j]; keys[j]=t;
+  p.photoOrder=keys;
+  return true;
 }
 // 区分（gid=null は未分類）に属する、この図面の写真src一覧
 function groupPhotoSrcs(p,gid){
@@ -4763,8 +4858,7 @@ function renderLedger(){
       <div class="lphotos">`;
     // ピン内を区分ごとに小分け（区分が無ければ従来どおりフラット）
     if(lgroups.length){
-      const items=[]; slots.forEach((sl,si)=>{ if(sl.src) items.push({src:sl.src,slot:sl,no:si+1}); });
-      extra.forEach(src=>items.push({src,slot:null,no:0}));
+      const items=pinPhotoItems(p,ledgerDwgId);   // 並べ替えた順（出力と同じ）
       const emptyItems=[]; slots.forEach((sl,si)=>{ if(!sl.src) emptyItems.push({sl,no:si+1}); });
       const UP2='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>';
       const DN2='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
@@ -4794,7 +4888,8 @@ function renderLedger(){
                +`<button class="lgrp-mini" data-gdn2="${gp.id}" data-pin="${p.id}" ${gi>=lgroups.length-1?'disabled':''} title="この区分を下へ">${DN2}</button>`;
         }
         html+=offBtn(gp.id,srcs)+`</div><div class="lgrp-photos" data-gbody="${gp.id}" ${cl?'hidden':''}>`;
-        its.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no,p));
+        its.forEach((it,ii)=>html+=photoCellHtml(it.src,it.slot,it.no,p,
+          {key:it.orderKey, first:ii===0, last:ii===its.length-1}));
         if(!its.length) html+=`<div class="lphoto-none">この区分の写真はまだありません。</div>`;
         html+=`</div>`;
       });
@@ -4804,13 +4899,17 @@ function renderLedger(){
         html+=`<div class="lgrp-head${clU?' collapsed':''}">`+headBtn(null,'未分類',un.length,un.map(it=>it.src))
              +`<span class="sp"></span>`
              +offBtn(null,un.map(it=>it.src))+`</div><div class="lgrp-photos" data-gbody="un:${p.id}" ${clU?'hidden':''}>`;   // 未分類は常に最後なので並べ替えは無し
-        un.forEach(it=>html+=photoCellHtml(it.src,it.slot,it.no,p));
+        un.forEach((it,ii)=>html+=photoCellHtml(it.src,it.slot,it.no,p,
+          {key:it.orderKey, first:ii===0, last:ii===un.length-1}));
         emptyItems.forEach(it=>html+=emptyCellHtml(it.sl,p.id,it.no));
         html+=`</div>`;
       }
     } else {
-      slots.forEach((sl,si)=>{ html += sl.src ? photoCellHtml(sl.src, sl, si+1, p) : emptyCellHtml(sl, p.id, si+1); });
-      extra.forEach(src=>{ html += photoCellHtml(src, null, 0, p); });
+      // 区分が無いピンも同じ並びで出す（枠の写真→枠のない写真、を p.photoOrder で整えた順）
+      const flat=pinPhotoItems(p,ledgerDwgId);
+      flat.forEach((it,ii)=>{ html += photoCellHtml(it.src, it.slot, it.no, p,
+        {key:it.orderKey, first:ii===0, last:ii===flat.length-1}); });
+      slots.forEach((sl,si)=>{ if(!sl.src) html += emptyCellHtml(sl, p.id, si+1); });
     }
     if(!total) html+=`<div class="lphoto-none">枠も写真もありません。上のボタンで枠を用意するか、図面のピンから写真を追加してください。</div>`;
     html+=`</div></div>`;
@@ -4820,12 +4919,18 @@ function renderLedger(){
 }
 
 // 撮影済みのセル（従来の写真セル。枠から撮った場合は「枠 n」チップを付ける）
-function photoCellHtml(src, slot, no, pin){
+function photoCellHtml(src, slot, no, pin, ord){
   const meta=photoMeta(src);
   const off=pin?photoOff(pin,src):false;
   const CHK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
   const NG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
   const ledBtn=pin?`<button class="lphoto-led ${off?'off':''}" data-ledtoggle="${escAttr(src)}" data-pin="${pin.id}">${off?NG:CHK}${off?'台帳に載せない':'台帳に載せる'}</button>`:'';
+  const PREV='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>';
+  const NEXT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+  const ordBtns=(pin&&ord&&ord.key)
+    ? `<button class="lphoto-ord" data-pmove="${escAttr(ord.key)}" data-dir="-1" data-pin="${pin.id}" ${ord.first?'disabled':''} title="1つ前へ">${PREV}</button>`
+     +`<button class="lphoto-ord" data-pmove="${escAttr(ord.key)}" data-dir="1" data-pin="${pin.id}" ${ord.last?'disabled':''} title="1つ後ろへ">${NEXT}</button>`
+    : '';
   const linesHtml=meta.lines.map((ln,li)=>`
     <div class="lphoto-line">
       <input type="text" data-src="${escAttr(src)}" data-li="${li}" value="${escAttr(ln)}" placeholder="記入（使用部材・数量・施工内容など）">
@@ -4838,7 +4943,7 @@ function photoCellHtml(src, slot, no, pin){
       <button class="lphoto-anno ${hasPhotoInk(src)?'has':''}" data-src="${escAttr(src)}" title="写真に書き込み"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
     </div>
     <div class="lphoto-body">
-      ${ledBtn}
+      <div class="lphoto-actions">${ordBtns}${ledBtn}</div>
       <div class="lphoto-date">登録日：${meta.regDate}</div>
       <div class="lphoto-place"><label>内容</label>${slot
         ? `<input type="text" data-slotname="${slot.id}" value="${escAttr(slot.name)}" placeholder="例：外壁北面">`
@@ -5026,6 +5131,15 @@ function bindLedger(){
     srcs.forEach(src=>setPhotoOff(p,src,next));
     const gname=gid?((p.groups||[]).find(x=>x.id===gid)||{}).name||'区分':'未分類';
     pinLog(p,'ledger','区分',`「${gname}」の写真${srcs.length}枚を${next?'台帳に載せない':'台帳に載せる'}`);
+    rerenderLedger(); renderPhotoGrid(); renderPinLog();
+  }));
+  // 写真の並べ替え（同じ区分の中で1つ前／1つ後ろへ）
+  body.querySelectorAll('[data-pmove]').forEach(b=>b.addEventListener('click',()=>{
+    const p=(pins[ledgerDwgId]||[]).find(x=>x.id===b.dataset.pin); if(!p) return;
+    const items=pinPhotoItems(p,ledgerDwgId);
+    const it=items.find(x=>x.orderKey===b.dataset.pmove);
+    if(!movePhotoInOrder(p,items,b.dataset.pmove,+b.dataset.dir)) return;
+    pinLog(p,'order',photoName(p,it?it.src:null,ledgerDwgId), +b.dataset.dir<0?'1つ前へ':'1つ後ろへ');
     rerenderLedger(); renderPhotoGrid(); renderPinLog();
   }));
   // 写真1枚ごとの「載せる/載せない」
@@ -5411,13 +5525,16 @@ function ledgerCells(){
       lines:(meta.lines||[]).filter(l=>l.trim()!==''),
       groupName:groupName||''
     });
-    const its=[];
+    let its=[];
     // 除外写真は src:null（＝未撮影の枠）として扱い、枠のない除外写真はそもそも出さない
     planArr(ledgerDwgId,p.id).forEach(sl=>{
       const use=sl.src&&!photoOff(p,sl.src);
-      its.push({src:use?sl.src:null, meta:use?photoMeta(sl.src):sl.meta, planned:true, slotName:sl.name||''});
+      its.push({src:use?sl.src:null, meta:use?photoMeta(sl.src):sl.meta, planned:true, slotName:sl.name||'',
+                orderKey:photoOrderKey(p,sl,sl.src)});
     });
-    unplannedPhotos(ledgerDwgId,p).filter(src=>!photoOff(p,src)).forEach(src=>its.push({src,meta:photoMeta(src),planned:false,slotName:''}));
+    unplannedPhotos(ledgerDwgId,p).filter(src=>!photoOff(p,src)).forEach(src=>its.push({src,meta:photoMeta(src),planned:false,slotName:'',
+                orderKey:photoOrderKey(p,null,src)}));
+    its=sortByPhotoOrder(p,its);   // 台帳で入れ替えた並びを、そのまま出力の順にする
     const groups=pinGroups(p);
     if(groups.length){ // 区分ごとに並べ替え（各区分→未分類）。各セルに区分名を付与
       groups.forEach(g=>{ its.filter(it=>it.src&&photoGid(p,it.src)===g.id).forEach(it=>cells.push(Object.assign(base(it.meta,g.name,it.slotName),{src:it.src,planned:it.planned}))); });
@@ -6444,6 +6561,7 @@ function updatePannoSelBar(){
 }
 let pannoDrawing=null;      // 描画中のアイテム（free/図形）
 let pannoPolyDraft=null;    // 連続線の作図中アイテム
+let pannoPolyPending=false; // 連続線：指が触れている（点は離した位置で確定する）
 let pannoHoverPt=null;      // 連続線のラバーバンド端点
 let pannoShiftHeld=false;   // Shift（水平/垂直/45°固定・正方形/正円）
 let pannoSelected=null;     // 選択中のアイテム（移動ツール時）
@@ -6561,7 +6679,8 @@ async function rotatePanno(dir){
 
 function openPanno(src){
   pannoSrc=src;
-  pannoDrawing=null; pannoPolyDraft=null; pannoHoverPt=null;
+  pannoDrawing=null; pannoPolyDraft=null; pannoPolyPending=false; pannoHoverPt=null;
+  pannoLastTap=0; pannoLastTapPt=null;
   pannoClearMultiSel(); pannoPointers.clear(); pannoGesture=null;
   $('#panno').classList.add('show'); // 先に表示してステージ実寸を確定（採寸・中央寄せが正しくなる）
   setPannoTool('pen');
@@ -6792,10 +6911,11 @@ $('#pannoShapes').querySelectorAll('.ps-shape').forEach(b=>b.addEventListener('c
 // ポインタ操作
 pannoCanvas.addEventListener('pointerdown',e=>{
   e.preventDefault();
-  pannoCanvas.setPointerCapture(e.pointerId);
+  try{ pannoCanvas.setPointerCapture(e.pointerId); }catch(_){}  // 捕捉に失敗しても以降の処理は続ける
   pannoPointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(pannoPointers.size>=2){ // 2本指＝ピンチズーム/パン。描きかけは破棄
     pannoDrawing=null; pannoSelDraft=null; pannoDrag=null; pannoTextPt=null; pannoErasing=false;
+    pannoPolyPending=false; pannoHoverPt=null; // 連続線：ピンチの1本目で点を入れない
     pannoStartGesture(); return;
   }
   const pt=pannoToCanvas(e.clientX,e.clientY);
@@ -6825,7 +6945,14 @@ pannoCanvas.addEventListener('pointerdown',e=>{
     redrawPanno(); // 下ろした瞬間に1点目を即描画（書き始めの反応を良くする）
   } else if(pannoTool==='shape'){
     if(pannoShape==='poly'){
-      addPannoPolyPoint(pt); // 連続線はタップで点追加
+      // 点は指を離した位置で確定する（図面側と同じ）。押しながら動かして狙いを定められるし、
+      // ここで確定するとピンチの1本目でも点が入ってしまう。
+      pannoPolyPending=true;
+      if(pannoPolyDraft){
+        const last=pannoPolyDraft.pts[pannoPolyDraft.pts.length-1];
+        pannoHoverPt=pannoShiftHeld?pannoSnap(last.x,last.y,pt.x,pt.y):pt;
+      }
+      redrawPanno();
     } else {
       pannoDrawing={type:pannoShape,color:pannoColor,width:pannoWidth,dash:pannoDash,fill:pannoFill,x1:pt.x,y1:pt.y,x2:pt.x,y2:pt.y};
     }
@@ -6924,6 +7051,23 @@ function pannoEndDraw(e){
   if(e&&e.pointerId!=null){ pannoPointers.delete(e.pointerId); if(pannoPointers.size<2) pannoGesture=null; }
   // ペン消しゴムのなぞり終了
   if(pannoErasing){ pannoErasing=false; return; }
+  // 連続線：点は指を離した位置で確定する
+  if(pannoPolyPending){
+    const wasLast=pannoPointers.size===0;
+    pannoPolyPending=false;
+    // ピンチに移った／取り消された場合は点を置かない
+    if(!wasLast || !e || e.type!=='pointerup'){ pannoHoverPt=null; redrawPanno(); return; }
+    const now=Date.now();
+    // 終了のダブルタップは「画面上の距離」で見る。キャンバスの論理座標で見ると、
+    // 写真を拡大したときに許容が広がり（4倍で画面80px超）、次の点を打つつもりが線が終わる。
+    const dbl = pannoPolyDraft && pannoLastTapPt && (now-pannoLastTap<POLY_TAP_MS)
+      && Math.abs(e.clientX-pannoLastTapPt.x)<POLY_TAP_PX
+      && Math.abs(e.clientY-pannoLastTapPt.y)<POLY_TAP_PX;
+    if(dbl){ finishPannoPoly(); pannoLastTap=0; pannoLastTapPt=null; return; }
+    addPannoPolyPoint(pannoToCanvas(e.clientX,e.clientY));
+    pannoLastTap=now; pannoLastTapPt={x:e.clientX,y:e.clientY};
+    return;
+  }
   // 文字ツール：タップで入力/編集（写真編集モードで開く）
   if(pannoTool==='text' && pannoTextPt){
     const pt=pannoTextPt, moved=pannoTextMoved;
@@ -6951,14 +7095,11 @@ function pannoEndDraw(e){
 pannoCanvas.addEventListener('pointerup',pannoEndDraw);
 pannoCanvas.addEventListener('pointercancel',pannoEndDraw);
 
-// 連続線
-let pannoLastTap=0, pannoLastPt=null;
+/* 連続線。終了のダブルタップの判定は画面px・ミリ秒で持つ（図面側と同じ値）。
+   キャンバスの論理座標で持つと、写真の拡大率によって許容距離が変わってしまう。 */
+const POLY_TAP_MS=400, POLY_TAP_PX=16;
+let pannoLastTap=0, pannoLastTapPt=null;
 function addPannoPolyPoint(pt){
-  const now=Date.now();
-  // ダブルタップ（同じ位置・400ms以内）で終了
-  if(pannoPolyDraft && pannoLastPt && now-pannoLastTap<400 && Math.hypot(pt.x-pannoLastPt.x,pt.y-pannoLastPt.y)<12){
-    finishPannoPoly(); pannoLastTap=0; pannoLastPt=null; return;
-  }
   if(!pannoPolyDraft){
     pannoPolyDraft={type:'poly',color:pannoColor,width:pannoWidth,dash:pannoDash,pts:[pt]};
     photoInkArr(pannoSrc).push(pannoPolyDraft);
@@ -6967,7 +7108,7 @@ function addPannoPolyPoint(pt){
     const last=pannoPolyDraft.pts[pannoPolyDraft.pts.length-1];
     pannoPolyDraft.pts.push(pannoShiftHeld?pannoSnap(last.x,last.y,pt.x,pt.y):pt);
   }
-  pannoLastTap=now; pannoLastPt=pt; pannoHoverPt=null;
+  pannoHoverPt=null;
   redrawPanno();
 }
 function finishPannoPoly(){
@@ -6978,7 +7119,7 @@ function finishPannoPoly(){
     if(Math.hypot(b.x-a.x,b.y-a.y)<4) pts.pop(); else break;
   }
   if(pts.length<2){ const arr=photoInk[pannoSrc]; if(arr&&arr[arr.length-1]===pannoPolyDraft)arr.pop(); }
-  pannoPolyDraft=null; pannoHoverPt=null; redrawPanno();
+  pannoPolyDraft=null; pannoPolyPending=false; pannoHoverPt=null; redrawPanno();
 }
 
 // Shiftキー
@@ -7431,7 +7572,7 @@ $('#sizeReset').addEventListener('click',()=>{
 /* ピンのログ一覧。新しい順に、日付ごとにまとめて表示する。
    見出しは開閉ボタンを兼ねる（既定は畳んだ状態。選択は端末に覚えさせる）。 */
 const LOG_ACTION_LABEL={shoot:'撮影',update:'更新',delete:'削除',rotate:'回転',
-  group:'区分',classify:'分類',ledger:'台帳',note:'備考',name:'名前'};
+  group:'区分',classify:'分類',ledger:'台帳',note:'備考',name:'名前',order:'並び'};
 const PIN_LOG_HEAD=32;      // 最初に出す件数（残りは「さらに表示」で開く）
 const LS_PINLOG='zk_pinlog_open';
 let pinLogOpen=(lsGet(LS_PINLOG)==='1');
@@ -7535,8 +7676,12 @@ function renderPhotoGrid(){
   const CAM='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>';
   // 区分ごとに写真を振り分け（未撮影枠・区分未設定は「未分類」へ）
   const bucket={}; groups.forEach(gp=>bucket[gp.id]=[]); const uncat=[]; const emptySlots=[];
-  slots.forEach(sl=>{ if(sl.src){ const gid=photoGid(p,sl.src); (gid&&bucket[gid]?bucket[gid]:uncat).push({src:sl.src,name:sl.name}); } else { emptySlots.push(sl); } });
-  extra.forEach(src=>{ const gid=photoGid(p,src); (gid&&bucket[gid]?bucket[gid]:uncat).push({src,name:''}); });
+  // 台帳で入れ替えた並びと同じ順にする（画面ごとに並びが違うと、どれがどれか分からなくなる）
+  slots.forEach(sl=>{ if(!sl.src) emptySlots.push(sl); });
+  pinPhotoItems(p,state.selectedId).forEach(it=>{
+    const gid=photoGid(p,it.src);
+    (gid&&bucket[gid]?bucket[gid]:uncat).push({src:it.src, name:it.slot?(it.slot.name||''):''});
+  });
   const gOptions=(cur)=>groups.map(gp=>`<option value="${gp.id}" ${gp.id===cur?'selected':''}>${escHtml(gp.name)}</option>`).join('')+`<option value="" ${!cur?'selected':''}>未分類</option>`;
   const cell=(o)=>{ const src=o.src, i=p.photos.indexOf(src), off=photoOff(p,src);
     return `<div class="photo-item${off?' led-off':''}"><div class="photo-cell"><img class="lphoto-img" src="${src}" data-src="${escAttr(src)}" data-i="${i}">`
@@ -7858,7 +8003,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v8.3';
+const APP_BUILD='v8.5';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの

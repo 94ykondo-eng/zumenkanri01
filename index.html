@@ -1413,6 +1413,36 @@
        前回のツールのまま残ることがあるため）。
        [気づかせる] 上部バーの黄色いピルに加え、ピンシートと写真台帳の頭に一行出す。
        操作しようとして初めて気づく、では遅い。
+
+  build v9.1 (シフトを「比率」と「方眼」の2つに分ける)  —
+       [きっかけ] v8.9 でシフト1つに両方を載せたが、**「方眼には乗せたいが、正方形にはしたくない」
+       が作れなかった**。四角を方眼に沿って自由な大きさで描く、が現場では普通。
+       [直し方] 図形バーのボタンを2つにし、状態も別に持つ。
+       ・比率（state.shiftOn／従来のシフト）＝正方形・正円・45°刻み。どの図面でも効く
+       ・方眼（state.gridOn／新規）＝点を方眼の交点へ、移動はマス単位。**白紙図面だけ**
+       両方ONなら v8.9 と同じ（方眼へ吸着 → そのあと比率）。
+       [方眼は白紙を開いたら自動でON]（吉彦さんの選択）。白紙で作図するときはほぼ常に使うため。
+       図面を切り替えた**そのときだけ**入れ直す（renderViewer で lastGridDwgId と比べる）。
+       描いている途中に勝手に戻ると混乱するので、同じ図面のあいだは手で切った状態を尊重する。
+       [外付けキーボードの Shift は従来どおり「比率」]。方眼は画面のボタンだけ。
+       [取り込み図面では方眼ボタンを押せなくする] 吸着する相手（方眼）が無いため。
+       v9.0 と同じ「薄く＋色を抜く＋pointer-events:none」。押せてしまうと、ONにしたのに
+       効かない＝壊れて見える。
+       [アイコンだけでは区別できない] 2つ並ぶので、押している状態の色を分けた
+       （比率＝青／方眼＝緑）。押したときはトーストでも何が効くかを出す。
+       [触っていないもの] 吸着そのものの計算（snapGridPt / snapGridDelta / selScaleFactors の
+       step）は v8.9 のまま。入口の条件が effectiveShift() から effectiveGrid() に変わっただけ。
+       写真の注釈側のシフトは方眼と無関係なので、従来どおり比率だけ。
+
+  build v9.2 (モードの呼び名を「編集モード」「ロック中」に)  —
+       [きっかけ] 吉彦さんの指定。「見るだけ」は状態の説明としては正しいが、現場では
+       「ロックする／ロックを外す」のほうが通りがよい。
+       [変えたのは文言だけ] ボタン・ピル・断り書き・トースト・編集できない理由の5か所。
+       止める範囲も、起動時の既定（ロック中で開く）も、CSSのクラス名（body.viewonly）も
+       v9.0 のまま。**クラス名は変えていない**——見た目のためだけに名前を変えると、
+       過去のログや検証スクリプトと対応が取れなくなるため。
+       [ボタンの幅] 「編集モード」は5文字で、鍵アイコンと合わせると幅が要る。上部バーは
+       横並びなので、いちばん幅の広い状態（編集モード）でも潰れないことを実ブラウザで確かめた。
 -->
 <html lang="ja">
 <head>
@@ -1680,6 +1710,10 @@
   .shape-btn.on{background:rgba(229,55,42,.18);color:#FF8A7F;box-shadow:inset 0 0 0 1.5px rgba(229,55,42,.45)}
   .shape-sep{width:1px;align-self:stretch;background:var(--line2);margin:2px 0;flex-shrink:0}
   .shift-btn.on{background:rgba(59,130,246,.2);color:#8FBBFF;box-shadow:inset 0 0 0 1.5px rgba(59,130,246,.55)}
+  /* 2つ並ぶので、押している状態の色を分ける（比率＝青／方眼＝緑）。アイコンだけでは区別できない */
+  .grid-btn.on{background:rgba(34,196,138,.2);color:#7FE3BC;box-shadow:inset 0 0 0 1.5px rgba(34,196,138,.55)}
+  /* 方眼の無い図面（取り込み）では押せなくする。押せてONにできてしまうと、効かない＝壊れて見える */
+  .grid-btn.na{opacity:.34;pointer-events:none;filter:grayscale(1)}
   .style-colors{display:flex;gap:6px;flex-shrink:0}
   .style-sw{width:30px;height:30px;border-radius:50%;background:var(--sc);border:2.5px solid transparent;flex-shrink:0;box-shadow:0 2px 5px rgba(0,0,0,.3)}
   .style-sw:active{transform:scale(.9)}
@@ -2584,13 +2618,13 @@
   <!-- 図面の素性（旧サブバーの中身）。flex:1 でここが余白も兼ねる＝tb-spacer は不要 -->
   <div class="tb-ident">
     <span id="statusPill"></span>
-    <span class="lock-pill" id="lockPill" style="display:none">見るだけモード</span>
+    <span class="lock-pill" id="lockPill" style="display:none">ロック中</span>
     <span class="sb-title" id="vhTitle">—</span>
     <span class="meta-mini" id="vhMeta"></span>
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="「編集」と「見るだけ」の切り替え（起動時は見るだけ）">build v9.0</button>
+          data-desc="モードの呼び名を「編集モード」「ロック中」に">build v9.2</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2604,9 +2638,9 @@
       <path class="pv-slash" d="M3 3l18 18" style="display:none"/>
     </svg>
   </button>
-  <button class="icon-btn lock-btn" id="btnLock" aria-pressed="true" title="タップで「編集」と「見るだけ」を切り替え">
+  <button class="icon-btn lock-btn" id="btnLock" aria-pressed="true" title="タップで「編集モード」と「ロック中」を切り替え">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path class="lk-shackle" d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
-    <span class="lock-txt" id="lockTxt">見るだけ</span>
+    <span class="lock-txt" id="lockTxt">ロック中</span>
   </button>
   <button class="icon-btn" id="openInfo">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
@@ -2639,8 +2673,11 @@
       <button class="shape-btn" data-shape="arrow" title="矢印"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/><path d="M12 4h8v8"/></svg></button>
       <button class="shape-btn" data-shape="poly" title="連続線（タップで点を追加、ダブルタップで終了）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18l5-9 5 6 8-11"/></svg></button>
       <div class="shape-sep"></div>
-      <button class="shape-btn shift-btn" id="btnShiftToggle" title="シフト：正方形・正円・45°刻みの直線に固定／白紙の図面では方眼にも合わせる">
+      <button class="shape-btn shift-btn" id="btnShiftToggle" title="比率：正方形・正円・45°刻みの直線に固定">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 7h-4.5v9h-5v-9H5z"/></svg>
+      </button>
+      <button class="shape-btn grid-btn" id="btnGridToggle" title="方眼：方眼の線に合わせて描く（白紙の図面のみ）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="1.5"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>
       </button>
     </div>
     <button class="tp-collapsed-btn" id="shapeCollapsedBtn" title="タップして展開">
@@ -2914,7 +2951,7 @@
     </div>
   </div>
   </div>
-  <div class="viewonly-note">見るだけモードです。変更するには上の「見るだけ」を押して「編集」に切り替えてください。</div>
+  <div class="viewonly-note">ロック中です。変更するには上の「ロック中」を押して「編集モード」に切り替えてください。</div>
   <textarea class="pin-note-in" id="pinNote" style="margin-top:10px" placeholder="備考"></textarea>
   <div class="photos-head">
     <span>写真 <b id="photoCount">0</b> 枚</span>
@@ -3260,7 +3297,7 @@
     </button>
     <button class="ledger-close" id="ledgerClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
   </div>
-  <div class="viewonly-note" style="margin:10px 14px 0">見るだけモードです。変更するには上の「見るだけ」を押して「編集」に切り替えてください。</div>
+  <div class="viewonly-note" style="margin:10px 14px 0">ロック中です。変更するには上の「ロック中」を押して「編集モード」に切り替えてください。</div>
   <div class="ledger-body" id="ledgerBody"></div>
 </div>
 
@@ -3427,7 +3464,7 @@ function sheetSVG(diff){
 /* ===== DATA ===== */
 // scale: the X structural grid spans 148 canvas units per bay, dimensioned 6,400 mm on the sheet.
 const DEFAULT_MM_PER_UNIT=6400/148; // ≈ 43.24 mm per canvas unit
-let state={role:'field',online:true,selectedId:null,viewingVer:null,tool:'nav',viewLock:false,shapeType:'rect',selMode:'rect',shiftOn:false,
+let state={role:'field',online:true,selectedId:null,viewingVer:null,tool:'nav',viewLock:false,shapeType:'rect',selMode:'rect',shiftOn:false,gridOn:false,
   inkColor:'#E5372A',inkWidth:3.5,inkDash:false,inkFill:false,
   panelPos:{shape:'left',style:'right'},panelCollapsed:{shape:false,style:false},
   activeTab:'ver',curPin:null};
@@ -4183,6 +4220,22 @@ let hoverPt=null; // live rubber-band endpoint: follows mouse/pen hover, or a fi
 let physicalShiftHeld=false;
 function effectiveShift(){ return state.shiftOn || physicalShiftHeld; }
 function updateShiftVisual(){ $('#btnShiftToggle').classList.toggle('on', effectiveShift()); }
+/* 方眼ボタン（v9.1）。方眼を持たない図面（取り込み）では押せない見た目にする。 */
+function updateGridVisual(){
+  const b=$('#btnGridToggle'); if(!b) return;
+  const has=gridUnitOf(dwg())>0;
+  b.classList.toggle('na',!has);
+  b.classList.toggle('on', has && state.gridOn);
+}
+/* 白紙図面を開いたら方眼を自動でONにする（吉彦さんの選択）。
+   図面を切り替えた「そのとき」だけ入れ直す。同じ図面のあいだは、手で切った状態を尊重する
+   （描いている途中に勝手に戻ると混乱するため）。 */
+let lastGridDwgId='\u0000';
+function syncGridForDrawing(){
+  if(state.selectedId===lastGridDwgId) return;
+  lastGridDwgId=state.selectedId;
+  state.gridOn = gridUnitOf(dwg())>0;
+}
 function snapAngle(x1,y1,x2,y2){
   const dx=x2-x1, dy=y2-y1, dist=Math.hypot(dx,dy);
   const ang=Math.round(Math.atan2(dy,dx)/(Math.PI/4))*(Math.PI/4);
@@ -4192,7 +4245,9 @@ function snapAngle(x1,y1,x2,y2){
    作成時に持たせた d.gridUnit（キャンバス座標での1マス）だけが手がかり。
    持っていない図面（取り込み／v8.9より前の白紙）は 0 を返す＝吸着しない。 */
 function gridUnitOf(d){ return (d && d.blank && d.gridUnit>0) ? d.gridUnit : 0; }
-function gridSnapStep(){ return effectiveShift() ? gridUnitOf(dwg()) : 0; }
+// v9.1：方眼は比率（シフト）と別のボタンになった。両方ONなら「方眼へ吸着 → そのあと比率」
+function effectiveGrid(){ return state.gridOn && gridUnitOf(dwg())>0; }
+function gridSnapStep(){ return effectiveGrid() ? gridUnitOf(dwg()) : 0; }
 function snapGridPt(pt){ const g=gridSnapStep();
   return g ? {x:Math.round(pt.x/g)*g, y:Math.round(pt.y/g)*g} : pt; }
 // 移動はマス単位（＝方眼に乗っている図形が、乗ったまま動く）
@@ -4835,6 +4890,12 @@ $('#shapeRow').querySelectorAll('.shape-btn[data-shape]').forEach(btn=>btn.addEv
 }));
 $('#btnShiftToggle').addEventListener('click',()=>{
   state.shiftOn=!state.shiftOn; updateShiftVisual();
+  toast(state.shiftOn?'比率：正方形・正円・45°に固定します':'比率の固定をやめました', state.shiftOn?'ok':'');
+});
+$('#btnGridToggle').addEventListener('click',()=>{
+  if(gridUnitOf(dwg())<=0){ toast('この図面には方眼がありません（白紙から作った図面で使えます）','warn'); return; }
+  state.gridOn=!state.gridOn; updateGridVisual();
+  toast(state.gridOn?'方眼：方眼の線に合わせて描きます':'方眼に合わせるのをやめました', state.gridOn?'ok':'');
 });
 window.addEventListener('keydown',e=>{
   if(e.key==='Shift'&&!physicalShiftHeld){ physicalShiftHeld=true; updateShiftVisual(); }
@@ -7574,7 +7635,7 @@ function renderPins(){
 function editBlockReason(){
   const d=dwg(), v=viewingVerObj();
   if(!d) return '図面が選択されていません。左上の図面リストから開くか、「＋ 新規」で取り込んでください。';
-  if(state.viewLock) return '見るだけモードです。上の「見るだけ」を押すと編集できます。';
+  if(state.viewLock) return 'ロック中です。上の「ロック中」を押すと編集モードになります。';
   if(!state.online && !d.cached) return 'オフラインのため、この図面は端末に保存されていません。ペン・図形・ピンを追加できません。';
   if(!isWorkVer(v)) return `${verLabel(v.v)} は確定済みの記録のため編集できません。最新の版に戻ると編集できます。`;
   return null;
@@ -8356,7 +8417,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v9.0';
+const APP_BUILD='v9.2';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの
@@ -8757,6 +8818,7 @@ $('#renameInput').addEventListener('keydown',e=>{ if(e.key==='Enter') commitRena
 $('#renameFloor').addEventListener('keydown',e=>{ if(e.key==='Enter') commitRename(); });
 $('#renameScrim').addEventListener('click',e=>{ if(e.target.id==='renameScrim') closeRenameDialog(); });
 function renderViewer(){
+  syncGridForDrawing(); updateGridVisual(); // 図面を切り替えたら方眼の入り切りを合わせる
   const d=dwg();
   if(!d){
     $('#vhTitle').textContent='図面が未選択';
@@ -9148,7 +9210,7 @@ function setViewLock(on,silent){
   state.viewLock=!!on;
   $('#btnLock').classList.toggle('locked-on',state.viewLock);
   $('#btnLock').setAttribute('aria-pressed',String(state.viewLock));
-  $('#lockTxt').textContent = state.viewLock?'見るだけ':'編集';
+  $('#lockTxt').textContent = state.viewLock?'ロック中':'編集モード';
   $('#lockPill').style.display = state.viewLock?'':'none';
   document.body.classList.toggle('viewonly',state.viewLock);
   $('.lk-shackle').setAttribute('d', state.viewLock?'M8 11V8a4 4 0 0 1 8 0v3':'M8 11V8a4 4 0 0 1 8 0'); // 開いた鍵
@@ -9156,7 +9218,7 @@ function setViewLock(on,silent){
   renderViewer(); // ツールのロック表示を更新
   if($('#pinSheet').classList.contains('open')) renderPhotoGrid();
   if($('#ledger').classList.contains('show')) renderLedger();
-  if(!silent) toast(state.viewLock?'見るだけモードにしました（書き込めません）':'編集できます', state.viewLock?'warn':'ok');
+  if(!silent) toast(state.viewLock?'ロックしました（書き込めません）':'編集モードにしました', state.viewLock?'warn':'ok');
 }
 // 見るだけ中のジェスチャを黙って止める（トーストを出すと、ただスクロールしただけで警告が出る）
 function viewOnly(){ return !!state.viewLock; }

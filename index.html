@@ -1388,6 +1388,31 @@
        方眼へ丸めたあとに比率をそろえる過程で、片方の辺が目から外れることがある（比率のもとに
        なった側の辺は目に乗る）。**きっちり目に合わせたいときは辺の真ん中のハンドルを使う**
        （1軸だけなので比率の固定が働かず、必ず目に乗る）。
+
+  build v9.0 (「編集」と「見るだけ」の切り替え)  —
+       [きっかけ] 「見るだけモードが欲しい」。実は v1 から閲覧ロック（#btnLock / state.viewLock）は
+       あったのに、無いと思われていた。**鍵アイコンだけで文字が無く、今どちらのモードなのかが
+       小さなピルでしか分からなかった**のが原因。加えて、効いていたのは図面キャンバスだけで、
+       写真の書き込み・ピンシートの変更・台帳の変更は素通りだった＝半分しか止まっていなかった。
+       [①文字で出す] ボタンに「編集」／「見るだけ」の文字を入れ、**今の状態**を表示する
+       （押すとどうなるか、ではなく、いま何なのか。v7.99 のログ見出しと同じ考え方）。
+       [②既定は「見るだけ」] 起動時は必ず見るだけで開く（吉彦さんの選択：現場で図面を見せながら
+       説明するときの誤書き込みを防ぐのが主目的）。**前回の状態は覚えない。** 覚えると
+       「編集のまま置いてある端末」ができてしまい、既定の意味がなくなる。
+       [③止める範囲] 写真の書き込み・ピンの変更・台帳の変更まで全部（吉彦さんの選択）。
+       図面の改名・削除・版の確定・PDF/Excel出力・ドライブ保存は**止めない**（現場で書き込む人と
+       持ち帰って整理する人が同じ端末を使うため、記録の操作まで塞ぐと不便になる）。
+       [止め方は body.viewonly のCSS] 一箇所ずつ JS で塞ぐと、あとで足した操作が漏れる。
+       body にクラスを1つ付け、編集の入口になる要素をまとめて opacity＋pointer-events:none に。
+       **display:none にしない**（画面が動いて iOS の誤タップを招く／どこに何があるか分からなくなる）。
+       [ジェスチャだけは JS で塞ぐ] CSS で消せない3つ＝写真台帳の長押しドラッグ・ピンの写真画面の
+       ドラッグ・写真キャンバスへの描き込み。ここは pointerdown の頭で黙って return する
+       （トーストを出すと、ただスクロールしただけで警告が出る）。
+       [移動と拡大は残す] 写真の書き込み画面のドックは「移動」だけ生かす。見るだけでも拡大して
+       細部を確かめたいため。setPannoTool も nav 以外を弾く（ドックを塞いでも、選択が
+       前回のツールのまま残ることがあるため）。
+       [気づかせる] 上部バーの黄色いピルに加え、ピンシートと写真台帳の頭に一行出す。
+       操作しようとして初めて気づく、では遅い。
 -->
 <html lang="ja">
 <head>
@@ -1500,6 +1525,36 @@
   @keyframes saveWarnPulse{0%,100%{opacity:1}50%{opacity:.62}}
   .lock-btn.locked-on{background:#F5A524;color:#0E1218;border-color:#F5A524}
   .lock-btn.locked-on svg{color:#0E1218}
+  .lock-txt{font-size:12.5px;font-weight:700;white-space:nowrap}
+  /* 「見るだけ」中は編集の入口をまとめて塞ぐ（v9.0）。display:none にはしない——
+     画面が動いて iOS の誤タップを招くうえ、どこに何があるのか分からなくなるため。 */
+  body.viewonly .pg-tools,
+  body.viewonly .photo-item .rm,
+  body.viewonly .photo-gsel,
+  body.viewonly .photo-led-cb,
+  body.viewonly .photo-name,
+  body.viewonly .photo-cell.empty,
+  body.viewonly #btnAddPhoto,
+  body.viewonly #pinDelete,
+  body.viewonly #pinTitle,
+  body.viewonly #pinNote,
+  body.viewonly #pinAppearToggle,
+  body.viewonly .lgrp-mini,
+  body.viewonly .lgrp-off,
+  body.viewonly .lgrp-add,
+  body.viewonly .lgrp-chips,
+  body.viewonly .lsec-plan-btns,
+  body.viewonly .panno-rot,
+  body.viewonly .panno-shapes,
+  body.viewonly .panno-style,
+  body.viewonly .panno-selbar,
+  body.viewonly .panno-dock .pd-btn:not(#pannoNav){opacity:.34;pointer-events:none;filter:grayscale(1)}
+  /* 薄くするだけだと、地色の濃い緑のボタン（「＋写真」「区分を追加」）はまだ使えるように見えた。
+     色を抜くと一目で「今は押せない」と分かる（v9.0の実機前の見直し）。 */
+  /* 見るだけモードの断り書き。上部バーのピルだけだと、ピンや台帳を開いた先で気づけない */
+  .viewonly-note{display:none;font-size:12px;font-weight:600;color:#0E1218;background:#F5A524;
+    border-radius:8px;padding:6px 10px;margin:0 0 10px;line-height:1.5}
+  body.viewonly .viewonly-note{display:block}
   .lock-pill{font-size:11px;font-weight:700;color:#0E1218;background:#F5A524;border-radius:6px;padding:2px 8px;white-space:nowrap;flex-shrink:0}
   .text-input{width:100%;box-sizing:border-box;font-size:17px;line-height:1.4;font-family:var(--sans);color:var(--text);
     background:var(--panel2);border:1px solid var(--line2);border-radius:10px;padding:11px 13px;margin:12px 0;resize:vertical;min-height:56px;outline:none}
@@ -2529,13 +2584,13 @@
   <!-- 図面の素性（旧サブバーの中身）。flex:1 でここが余白も兼ねる＝tb-spacer は不要 -->
   <div class="tb-ident">
     <span id="statusPill"></span>
-    <span class="lock-pill" id="lockPill" style="display:none">閲覧ロック中</span>
+    <span class="lock-pill" id="lockPill" style="display:none">見るだけモード</span>
     <span class="sb-title" id="vhTitle">—</span>
     <span class="meta-mini" id="vhMeta"></span>
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="白紙の方眼を細かく＋シフトで方眼に合わせて作図">build v8.9</button>
+          data-desc="「編集」と「見るだけ」の切り替え（起動時は見るだけ）">build v9.0</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2549,8 +2604,9 @@
       <path class="pv-slash" d="M3 3l18 18" style="display:none"/>
     </svg>
   </button>
-  <button class="icon-btn lock-btn" id="btnLock" title="閲覧ロック（見るだけモード）">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+  <button class="icon-btn lock-btn" id="btnLock" aria-pressed="true" title="タップで「編集」と「見るだけ」を切り替え">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path class="lk-shackle" d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+    <span class="lock-txt" id="lockTxt">見るだけ</span>
   </button>
   <button class="icon-btn" id="openInfo">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
@@ -2858,6 +2914,7 @@
     </div>
   </div>
   </div>
+  <div class="viewonly-note">見るだけモードです。変更するには上の「見るだけ」を押して「編集」に切り替えてください。</div>
   <textarea class="pin-note-in" id="pinNote" style="margin-top:10px" placeholder="備考"></textarea>
   <div class="photos-head">
     <span>写真 <b id="photoCount">0</b> 枚</span>
@@ -3203,6 +3260,7 @@
     </button>
     <button class="ledger-close" id="ledgerClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
   </div>
+  <div class="viewonly-note" style="margin:10px 14px 0">見るだけモードです。変更するには上の「見るだけ」を押して「編集」に切り替えてください。</div>
   <div class="ledger-body" id="ledgerBody"></div>
 </div>
 
@@ -4736,6 +4794,9 @@ function drawFreeLive(){
   }
 }
 function setTool(t){
+  // 見るだけ：作図の道具は選べない（選べてしまうと、押しても描けない＝壊れて見える）。
+  // 理由をトーストで出すのは、押した反応が何も無いと故障と区別できないため。
+  if(state.viewLock && t!=='nav'){ toast(editBlockReason(),'warn'); t='nav'; }
   if(t!=='shape' && polyDraft) finishPoly();
   if(t!=='shape') deselectShape();
   if(t!=='select') clearMultiSel(); // 選択ツールを離れたら複数選択を解除
@@ -6785,6 +6846,7 @@ async function rotateImageDataUrl(src,dir){
 }
 let pannoRotating=false;
 async function rotatePanno(dir){
+  if(viewOnly()) return;
   const src=pannoSrc;
   if(!src||pannoRotating) return;
   if(pannoPolyDraft) finishPannoPoly();   // 作図途中なら確定してから回す
@@ -6999,6 +7061,8 @@ function pannoEraseAt(pt){
 
 // ツール切替
 function setPannoTool(t){
+  // 見るだけ：拡大して見るための「移動」だけ生かす（ドックを塞いでも選択が残ることがある）
+  if(viewOnly() && t!=='nav') t='nav';
   if(t!=='shape' && pannoPolyDraft) finishPannoPoly();
   if(t!=='nav') pannoDeselect(); // 描画系ツールに移ったら選択解除
   if(t!=='select') pannoClearMultiSel(); // 選択ツールを離れたら複数選択を解除
@@ -7510,7 +7574,7 @@ function renderPins(){
 function editBlockReason(){
   const d=dwg(), v=viewingVerObj();
   if(!d) return '図面が選択されていません。左上の図面リストから開くか、「＋ 新規」で取り込んでください。';
-  if(state.viewLock) return '閲覧ロック中です。編集するには右上のロックを解除してください。';
+  if(state.viewLock) return '見るだけモードです。上の「見るだけ」を押すと編集できます。';
   if(!state.online && !d.cached) return 'オフラインのため、この図面は端末に保存されていません。ペン・図形・ピンを追加できません。';
   if(!isWorkVer(v)) return `${verLabel(v.v)} は確定済みの記録のため編集できません。最新の版に戻ると編集できます。`;
   return null;
@@ -7947,6 +8011,7 @@ $('#btnAddPhoto').addEventListener('click',()=>{ const p=curPinObj(); if(!p)retu
 let ldrag=null, lastLedgerDragEnd=0;
 const LD_EDGE=76, LD_SPEED=16, LD_HOLD=240, LD_SLOP=10;
 $('#ledgerBody').addEventListener('pointerdown',e=>{
+  if(viewOnly()) return;   // 見るだけ：長押しドラッグで並べ替えさせない
   const img=e.target.closest('img.lphoto-img'); if(!img) return;
   const cell=img.closest('.lphoto[data-okey]'); if(!cell) return;
   const sec=cell.closest('.lsec'); if(!sec) return;
@@ -8078,6 +8143,7 @@ function endLedgerDrag(wasActive){
 let pdrag=null, lastPhotoDragEnd=0;
 const PG_EDGE=76, PG_SPEED=16;   // 端からの距離(px) と 1フレームの自動スクロール量
 $('#photoGrid').addEventListener('pointerdown',e=>{
+  if(viewOnly()) return;   // 見るだけ：区分へのドラッグをさせない
   const img=e.target.closest('img.lphoto-img'); if(!img||!curPinObj()) return;
   pdrag={ src:img.dataset.src, thumb:img.src, cell:img.closest('.photo-item'),
           sx:e.clientX, sy:e.clientY, x:e.clientX, y:e.clientY, active:false, raf:0 };
@@ -8290,7 +8356,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v8.9';
+const APP_BUILD='v9.0';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの
@@ -9076,14 +9142,24 @@ function symRotate(d){
   else symbolRot=((symbolRot+d+360)%360);
   $('#symRotVal').textContent=(symSelected?symSelected.rot:symbolRot)+'°';
 }
-function setViewLock(on){
-  state.viewLock=on;
-  $('#btnLock').classList.toggle('locked-on',on);
-  $('#lockPill').style.display = on?'':'none';
-  if(on) setTool('nav');
+/* 「編集」と「見るだけ」（v9.0）。ボタンには**いまの状態**を出す（押すとどうなるか、ではない）。
+   silent は起動時用（開いた瞬間にトーストを出さない）。 */
+function setViewLock(on,silent){
+  state.viewLock=!!on;
+  $('#btnLock').classList.toggle('locked-on',state.viewLock);
+  $('#btnLock').setAttribute('aria-pressed',String(state.viewLock));
+  $('#lockTxt').textContent = state.viewLock?'見るだけ':'編集';
+  $('#lockPill').style.display = state.viewLock?'':'none';
+  document.body.classList.toggle('viewonly',state.viewLock);
+  $('.lk-shackle').setAttribute('d', state.viewLock?'M8 11V8a4 4 0 0 1 8 0v3':'M8 11V8a4 4 0 0 1 8 0'); // 開いた鍵
+  if(state.viewLock){ setTool('nav'); if(pannoTool!=='nav') setPannoTool('nav'); }
   renderViewer(); // ツールのロック表示を更新
-  toast(on?'閲覧ロック中：編集できません':'閲覧ロックを解除しました', on?'warn':'ok');
+  if($('#pinSheet').classList.contains('open')) renderPhotoGrid();
+  if($('#ledger').classList.contains('show')) renderLedger();
+  if(!silent) toast(state.viewLock?'見るだけモードにしました（書き込めません）':'編集できます', state.viewLock?'warn':'ok');
 }
+// 見るだけ中のジェスチャを黙って止める（トーストを出すと、ただスクロールしただけで警告が出る）
+function viewOnly(){ return !!state.viewLock; }
 
 /* ---- B. アンドゥ拡張：strokes配列のスナップショット履歴（追加/移動/リサイズ/削除/全消去を統一） ---- */
 let inkHist={}, inkRedo={};
@@ -9364,6 +9440,7 @@ $('#buildTag').addEventListener('click',e=>{
 function renderAll(){renderList();renderViewer();renderContext();updateTabs();}
 window.addEventListener('resize',fitView);
 renderAll();fitView();layoutPanels();updateCollapsedGlyphs();
+setViewLock(true,true); // 起動は必ず「見るだけ」から（前回の状態は覚えない）
 // 復元は速ければ何も出さない（400ms超えたときだけスピナー）
 migrateVersions();
 withBusy('前回の作業を復元中…', ()=>restoreFromAutosave(), '', {delay:400}).then(ok=>{

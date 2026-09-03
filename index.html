@@ -1443,6 +1443,50 @@
        過去のログや検証スクリプトと対応が取れなくなるため。
        [ボタンの幅] 「編集モード」は5文字で、鍵アイコンと合わせると幅が要る。上部バーは
        横並びなので、いちばん幅の広い状態（編集モード）でも潰れないことを実ブラウザで確かめた。
+
+  build v9.3 (連続線を「終える」ボタンで確実に終わらせる)  —
+       [きっかけ] 「写真の外を押しても連続線が終わらない」。実ブラウザで測ったところ、v8.8 の
+       仕組み自体は指でも細い余白(24px)でも正しく動いていた。終われないのは条件から外れる
+       4つの場面だった：①写真を3倍ほどに拡大すると .panno-holder がステージを覆い、
+       「写真の外」が物理的に無くなる ②ハンドラは #pannoStage にしか無く、下のドックや
+       上のスタイル行の空きスペースは対象外 ③pannoPointers に指が1件でも残ると
+       `if(pannoPointers.size) return` で以後ずっと無視される ④図形の種類を切り替えても
+       pannoTool は 'shape' のままなので終了処理を通らない。
+       [①への答え＝浮かせたボタン] .poly-end-chip をステージに position:absolute で浮かせた。
+       拡大しても必ず画面内にあるので押せる。**行に置かなかった**理由：出たり消えたりすると
+       隣のボタンが動き、iOS が同じタップの click を落とす（既知の地雷）。
+       [click ではなく pointerdown] 押した瞬間にボタン自身が消えるので、click を待つと
+       取りこぼす。同じ理由でステージへの伝播も止める（二重に終了処理を走らせない）。
+       [③への答え＝窓側でも指を消す] pannoForgetPointer を window の pointerup/pointercancel に
+       capture で付けた。キャンバス側が先に走るので通常経路では何もしない。残った1件が
+       自然に減らない作りだったのが穴で、画面に何も出ないため原因が読めない類の不具合だった。
+       [やらなかったこと] ステージに余白を強制して「拡大しても写真の外を作る」案は見送り。
+       拡大して細部に描く操作感を壊すため。終わり方は ダブルタップ／写真の外／パネルの空き／
+       ツール切替／図形切替／終えるボタン の6つになった。
+
+  build v9.4 (書き込みの全消去に確認とやり直しを付ける)  —
+       [きっかけ] 写真の書き込み画面のゴミ箱（#pannoClear）が本当に消すのかの点検。実ブラウザで
+       押して確かめたところ、確認は出ず、押した瞬間に全部消え、**戻す手段が無かった**。
+       `photoInk[src]=[]` と同時に `photoInkRedo[src]=[]` もしていたため、アンドゥもやり直しも
+       無効になり、材料そのものが残らない。ログにも何も残らないので後から辿れない。
+       ドックの右端で、隣が「選択中の図形を削除」（どちらも消す系）＝押し間違いの実害が大きい。
+       [消えるのは書き込みだけ] 写真そのもの・src・枚数は変わらない。点検で確認済み。
+       文言にも「写真そのものは消えません」と入れた（ゴミ箱の絵から写真の削除だと読める）。
+       [戻し方] 消した配列を `{__cleared:[...]}` という**1件のまとまり**として photoInkRedo に積み、
+       やり直しボタンでほどく。1個ずつ積むと、やり直しを個数ぶん押す羽目になるうえ、
+       取り出す順で重なりの前後が入れ替わる。`__cleared` は photoInk 側へは絶対に入れない
+       （やり直しの中でほどく）。photoInkRedo は端末保存にもドライブ保存にも乗らないので、
+       この目印が保存データを汚すことはない。
+       [戻せなくなる条件] 消したあとに新しく描くと、既存の作りどおり photoInkRedo が空になる
+       （＝退避も消える）。アンドゥの常識どおりだが、戻すつもりなら先に戻すこと。
+       [確認は常に出す] 1個のときも出す。個数で出し分けると「出るときと出ないときがある」に
+       なり、かえって身構えなくなる。ダイアログは gConfirm（.confirm-scrim は z-index:200 で
+       .panno の150より前面。v7.56で対処済み）。
+       [取り違え防止] ダイアログを待っている間に別の写真へ移る経路があるので、押した時点の src を
+       控えておき、戻ってきたときに変わっていたら何もしない。
+       [ついでに] 図面側の全消去ダイアログの文面「この操作はやり直せません」を直した。v4.1 の
+       作成時は事実だったが、v7.29 の beginInkTxn/commitInkTxn 導入で doClearAll も1操作として
+       戻せるようになっており、以後ずっと古い文面が残っていた。戻せるのに諦める人が出る。
 -->
 <html lang="ja">
 <head>
@@ -2557,6 +2601,15 @@
   .panno-stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;
     background:radial-gradient(circle at 50% 40%,#12171F,#0B0E13);touch-action:none;padding:12px}
   .panno-holder{position:absolute;left:0;top:0;transform-origin:0 0;box-shadow:0 20px 60px rgba(0,0,0,.6);touch-action:none;will-change:transform}
+  /* 連続線の「終える」ボタン（v9.3）。ステージの上に浮かせる＝写真を拡大して
+     ステージを覆い尽くしても押せる。行に置くと、出たり消えたりで隣のボタンが動き、
+     iOS が同じタップの click を落とす（既知の地雷）。浮かせれば誰の位置も変えない。 */
+  .poly-end-chip{position:absolute;right:14px;bottom:14px;z-index:6;display:none;
+    align-items:center;gap:8px;height:48px;padding:0 18px;border-radius:24px;
+    background:var(--signal);color:#0B0E13;border:none;font-size:15px;font-weight:800;
+    box-shadow:0 8px 24px rgba(0,0,0,.55);touch-action:none;-webkit-user-select:none;user-select:none}
+  .poly-end-chip.show{display:flex}
+  .poly-end-chip svg{width:19px;height:19px;pointer-events:none}
   .panno-holder img{display:block;width:100%;height:100%;user-select:none;-webkit-user-drag:none}
   .panno-canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair;
     -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
@@ -2624,7 +2677,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="モードの呼び名を「編集モード」「ロック中」に">build v9.2</button>
+          data-desc="書き込みの全消去に確認とやり直しを付ける">build v9.4</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -3315,6 +3368,10 @@
       <img id="pannoPhoto" alt="注釈対象の写真">
       <canvas class="panno-canvas" id="pannoCanvas"></canvas>
     </div>
+    <button class="poly-end-chip" id="pannoPolyEnd" title="連続線をここで終える">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      連続線を終える
+    </button>
   </div>
   <!-- 図形サブ選択（図形ツール時のみ） -->
   <div class="panno-shapes" id="pannoShapes">
@@ -5009,7 +5066,10 @@ function doClearAll(){
 function openClearConfirm(){
   const n=(strokes[inkKey()]||[]).length;
   if(!n)return; // 何も無ければ確認せず終了（ボタンは元々disabledだが念のため）
-  $('#clearDesc').innerHTML=`この図面の朱書き・図形・計測（<b>${n}</b> 件）をすべて消去します。<br>この操作はやり直せません。`;
+  // 文面は v9.4 で修正。v4.1 の作成時は本当に戻せなかったが、v7.29 の beginInkTxn/commitInkTxn で
+  // doClearAll も1操作として戻せるようになっている。「やり直せません」は事実と違ううえ、
+  // 戻せるのに諦める人が出る。写真側（v9.4）とも言い回しを揃えた。
+  $('#clearDesc').innerHTML=`この図面の朱書き・図形・計測（<b>${n}</b> 件）をすべて消去します。<br>消したあとは「元に戻す」で戻せます。`;
   $('#clearScrim').classList.add('show');
 }
 function closeClearConfirm(){ $('#clearScrim').classList.remove('show'); }
@@ -7082,6 +7142,9 @@ function refreshPannoBtns(){
   $('#pannoRedo').disabled=!hasRedo;
   $('#pannoClear').disabled=!has;
   $('#pannoErase').disabled = (pannoTool==='select') ? !pannoSelMulti.length : !pannoSelected;
+  // 連続線を引いている間だけ「終える」ボタンを出す（v9.3）。
+  // redrawPanno の末尾から必ず呼ばれるので、点の追加・終了・ツール切替の全経路を拾える。
+  const pe=$('#pannoPolyEnd'); if(pe) pe.classList.toggle('show', !!pannoPolyDraft);
 }
 // 画面座標→注釈論理座標
 function pannoToCanvas(cx,cy){
@@ -7167,6 +7230,10 @@ $('#pannoPenErase').addEventListener('click',()=>{
 
 // 図形サブ選択
 $('#pannoShapes').querySelectorAll('.ps-shape').forEach(b=>b.addEventListener('click',()=>{
+  // 連続線を引いている途中で別の図形に移ったら、そこで終える（v9.3）。
+  // 以前は pannoTool が 'shape' のままなので setPannoTool の終了処理を通らず、
+  // 描きかけが宙に浮いたまま残っていた（閉じるまで確定しない）。
+  if(pannoPolyDraft && b.dataset.shape!=='poly') finishPannoPoly();
   pannoShape=b.dataset.shape;
   $('#pannoShapes').querySelectorAll('.ps-shape').forEach(x=>x.classList.toggle('on',x===b));
   if(pannoTool!=='shape') setPannoTool('shape');
@@ -7240,6 +7307,16 @@ $('#pannoStage').addEventListener('pointerdown',e=>{
   if(!pannoPolyDraft) return;                  // 作図中でなければ何もしない
   if(e.target.closest('#pannoHolder')) return; // 写真の上＝キャンバス側の処理に任せる
   if(pannoPointers.size) return;               // 写真に指が触れている＝ピンチの途中かもしれない
+  finishPannoPoly();
+});
+/* 写真の外＝ステージの余白、だけではなかった（v9.3）。上のスタイル行・下のドックの
+   「何も無いところ」を押しても終わらず、「写真の外を押したのに終わらない」と感じる。
+   ボタン・入力欄は除く（色や太さを選んだだけで線が終わるのは行き過ぎ）。 */
+$('#panno').addEventListener('pointerdown',e=>{
+  if(!pannoPolyDraft) return;
+  if(e.target.closest('#pannoStage')) return;           // ステージ内は上の処理が見ている
+  if(e.target.closest('button,input,select,textarea,label')) return; // 操作子の上は素通し
+  if(pannoPointers.size) return;
   finishPannoPoly();
 });
 pannoCanvas.addEventListener('pointermove',e=>{
@@ -7367,6 +7444,24 @@ function pannoEndDraw(e){
 }
 pannoCanvas.addEventListener('pointerup',pannoEndDraw);
 pannoCanvas.addEventListener('pointercancel',pannoEndDraw);
+/* 指の取りこぼし掃除（v9.3）。pannoPointers から指を消していたのは pannoCanvas の
+   pointerup/pointercancel だけだった。setPointerCapture に失敗した・iOS が up を投げずに
+   終えた等で1件でも残ると、`pannoPointers.size` を見ている「写真の外をタップして終える」が
+   以後ずっと無視される（画面には何も出ないので原因が分からない）。窓側でも必ず消す。
+   キャンバス側のハンドラが先に走るので、通常の経路では何もしない。 */
+function pannoForgetPointer(e){
+  if(!e||e.pointerId==null) return;
+  if(pannoPointers.delete(e.pointerId) && pannoPointers.size<2) pannoGesture=null;
+}
+window.addEventListener('pointerup',pannoForgetPointer,true);
+window.addEventListener('pointercancel',pannoForgetPointer,true);
+/* 「連続線を終える」ボタン（v9.3）。押した瞬間にボタン自身が消えるので click では取りこぼす
+   （iOS はタップ中に要素が動く・消えると click を発火しない）→ pointerdown で確定する。
+   ステージのハンドラにも届かせない（二重に終了処理を走らせない）。 */
+$('#pannoPolyEnd').addEventListener('pointerdown',e=>{
+  e.preventDefault(); e.stopPropagation();
+  finishPannoPoly();
+});
 
 /* 連続線。終了のダブルタップの判定は画面px・ミリ秒で持つ（図面側と同じ値）。
    キャンバスの論理座標で持つと、写真の拡大率によって許容距離が変わってしまう。 */
@@ -7406,13 +7501,45 @@ $('#pannoUndo').addEventListener('click',()=>{
   if(pannoPolyDraft) finishPannoPoly();
   const a=photoInk[pannoSrc]; if(a&&a.length){ (photoInkRedo[pannoSrc]=photoInkRedo[pannoSrc]||[]).push(a.pop()); redrawPanno(); }
 });
+/* やり直し。ふだんは「1個ずつ」だが、全消去（v9.4）だけは丸ごと1件として積んであるので
+   1回で全部戻す。目印は `__cleared`。photoInk 側へは絶対に入らない（ここでほどく）。 */
 $('#pannoRedo').addEventListener('click',()=>{
   if(pannoPolyDraft) finishPannoPoly();
-  const r=photoInkRedo[pannoSrc]; if(r&&r.length){ (photoInk[pannoSrc]=photoInk[pannoSrc]||[]).push(r.pop()); redrawPanno(); }
+  const r=photoInkRedo[pannoSrc]; if(!r||!r.length) return;
+  const top=r.pop();
+  if(top && top.__cleared){
+    photoInk[pannoSrc]=top.__cleared.slice();
+    const owner=pinOwnerOfPhoto(pannoSrc);
+    if(owner) pinLog(owner,'update',photoName(owner,pannoSrc),`全消去を取り消し（書き込み${top.__cleared.length}個を復元）`);
+    toast(`書き込み${top.__cleared.length}個を戻しました`);
+  } else {
+    (photoInk[pannoSrc]=photoInk[pannoSrc]||[]).push(top);
+  }
+  redrawPanno();
 });
-$('#pannoClear').addEventListener('click',()=>{
+/* 全消去（v9.4で作り直し）。以前は押した瞬間に消え、確認もログも無く、
+   photoInkRedo も同時に空にしていたので**戻す材料が残らなかった**。
+   ドックの右端で隣が「選択中の図形を削除」なので、押し間違いの実害が大きい。 */
+$('#pannoClear').addEventListener('click',async()=>{
   if(!hasPhotoInk(pannoSrc)) return;
-  photoInk[pannoSrc]=[]; photoInkRedo[pannoSrc]=[]; pannoPolyDraft=null; pannoHoverPt=null; pannoDeselect(); redrawPanno();
+  const src=pannoSrc;                       // ダイアログの間に別の写真へ移っても取り違えない
+  if(pannoPolyDraft) finishPannoPoly();     // 描きかけも数に入れてから聞く
+  const m=(photoInk[src]||[]).length;
+  if(!m) return;
+  const okd=await gConfirm({title:'書き込みをすべて消す',
+    desc:`この写真の書き込み <b>${m}個</b> をすべて消します。<br>写真そのものは消えません。消したあとは「やり直し」で戻せます。`,
+    ok:'すべて消す', danger:true});
+  if(!okd) return;
+  if(pannoSrc!==src) return;                // 待っている間に画面が変わっていたら何もしない
+  const backup=(photoInk[src]||[]).slice();
+  photoInk[src]=[];
+  // 1件の「まとまり」として積む。1個ずつ積むと、やり直しを個数ぶん押す羽目になるうえ
+  // 取り出す順で重なりの前後が入れ替わる。
+  photoInkRedo[src]=[{__cleared:backup}];
+  pannoPolyDraft=null; pannoHoverPt=null; pannoDeselect(); redrawPanno();
+  const owner=pinOwnerOfPhoto(src);
+  if(owner) pinLog(owner,'update',photoName(owner,src),`書き込みを全消去（${backup.length}個）`);
+  toast(`書き込み${backup.length}個を消しました（やり直しで戻せます）`,'warn');
 });
 // 選択中の図形を削除（図面の消しゴム相当）
 $('#pannoErase').addEventListener('click',()=>{
@@ -8417,7 +8544,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v9.2';
+const APP_BUILD='v9.4';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの

@@ -1589,6 +1589,23 @@
        [見せ方] 「いま繋がる先」は当たり箱より**外**に、太さ3pxの角丸枠で出す。
        指の下に細い破線を描いても、押している本人には見えない。
        1つ目を覚えている間は緑、ドラッグ中は青と色を分ける。
+
+  build v9.9 (配線：離した位置で確定する不具合を修正／つなぐ場所を先に選ぶ)  —
+       [不具合] 実機で「線はできるが記号に付かず浮く」。原因は狙いではなく**見落とし**で、
+       endPointer が**離した位置で繋ぎ先を確定し直していなかった**。curItem.to は
+       「最後の pointermove の位置」のまま。iOS は素早く離すと、離した位置まで pointermove が
+       来ないことがある（合体イベントの都合で最後の移動が指の実位置より手前で終わる）。
+       結果、記号の上で離したつもりでも手前で浮く。
+       **図面の連続線では v8.4 で「点は指を離した位置で確定する」と直してあり、配線で同じ
+       見落としをしていた**（3.11 の「同じ機能が2実装ある」と同じ構造の穴）。
+       Playwright のマウスは目標まで細かく動かしてから離すので、この穴は素通りする。
+       **実機でしか出ない不具合の典型**で、v9.7・v9.8 の調整はこの穴には一切効いていなかった。
+       [新方式＝つなぐ場所を先に選ぶ（吉彦さんの選択）] 記号を押すと、その記号の接続点が
+       **画面44pxの大きなボタン**として、記号から画面52px外に出る。小さいものを正確に狙う代わりに
+       **大きなものから選ぶ**操作に変えた。ボタンを記号から離して置くのが要点で、押している指
+       （直径40〜50px）と記号の両方を避けないと「見えないものを狙う」元の問題に戻る。
+       手順：記号を押す→場所を選ぶ→相手の記号を押す→場所を選ぶ。ドラッグも残してある。
+       [取り消し] 何も無いところを押す／「やめる」。案内の文言は待っている内容で変える。
 -->
 <html lang="ja">
 <head>
@@ -2809,7 +2826,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="配線をタップ→タップでも繋げる（指で隠れない）">build v9.8</button>
+          data-desc="配線：離した位置で確定する不具合を修正／つなぐ場所を先に選ぶ">build v9.9</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2845,7 +2862,7 @@
 
   <!-- 配線のタップ待ち（v9.8）。トーストは消えるので、状態そのものを出しておく -->
   <div class="wire-hint" id="wireHint">
-    <span>つなぐ相手の記号を押してください</span>
+    <span id="wireHintLabel">つなぐ相手の記号を押してください</span>
     <button id="wireCancel">やめる</button>
   </div>
 
@@ -4674,8 +4691,56 @@ let wireHoverPort=null;   // 引いている最中に吸いつく先（描画で
    「離した位置」で確定するので、どこに付くのか見ながら合わせられない。
    1つ目を押して離す→wirePendFrom に覚える→2つ目を押すと線ができる。
    ドラッグは従来どおり残す（速い人はそちらのほうが速い）。 */
+/* つなぐ場所をあらかじめ選ぶ（v9.9・吉彦さんの選択）。
+   記号を押すと、その記号の接続点が**画面44pxの大きなボタン**として、記号から離れた位置に出る。
+   小さいものを正確に狙う代わりに、**大きなものから選ぶ**操作に変える。
+   ボタンは記号の外側（画面52px）に置くので、押している指や記号自体と重ならない。 */
+const PORT_BTN_OUT_PX=52;  // 記号の中心からボタンの中心までの距離（画面px）
+const PORT_BTN_R_PX=22;    // ボタンの半径（画面px）＝直径44px
+let wirePickSym=null;      // いま接続点のボタンを出している記号
+function portBtnPt(sym,port){
+  /* 距離は「画面52px」と「記号の端＋ボタン半径＋余白」の**大きいほう**。
+     画面px固定にすると、拡大したとき記号のほうが大きくなってボタンが記号の中に入り、
+     指と記号とボタンが重なる＝元の「見えないものを狙う」問題に戻る。 */
+  const o=Math.max(screenTol(PORT_BTN_OUT_PX),
+                   symbolHalf(sym)+screenTol(PORT_BTN_R_PX+10));
+  if(port==='t') return {x:sym.x, y:sym.y-o};
+  if(port==='b') return {x:sym.x, y:sym.y+o};
+  if(port==='l') return {x:sym.x-o, y:sym.y};
+  return {x:sym.x+o, y:sym.y};
+}
+function hitPortBtn(pt,sym){
+  if(!sym) return null;
+  const r=screenTol(PORT_BTN_R_PX);
+  let best=null, bd=r;
+  for(const p of symbolPortsOf(sym.kind)){
+    const q=portBtnPt(sym,p), d=Math.hypot(pt.x-q.x, pt.y-q.y);
+    if(d<bd){ bd=d; best=p; }
+  }
+  return best;
+}
+// 接続点を1つ確定したときの共通処理。from が未定なら from、決まっていれば線を作る
+function wireTakePort(sym,port){
+  const arr=strokes[inkKey()]=strokes[inkKey()]||[];
+  const q=symbolPortPt(sym,port);
+  const end={id:sym.id, port, x:q.x, y:q.y};
+  wirePickSym=null;
+  if(!wirePendFrom){ wirePendFrom=end; wireHoverPort=end; redrawInk(); return; }
+  if(wirePendFrom.id===end.id && wirePendFrom.port===end.port){  // 同じ場所を2回
+    wirePendFrom=null; wireHoverPort=null; redrawInk(); return;
+  }
+  beginInkTxn();
+  arr.push({type:'wire', id:nextItemId(arr,'w'), bend:wireBend,
+            color:state.inkColor, width:state.inkWidth, dash:state.inkDash,
+            from:wirePendFrom, to:end});
+  redoStrokes[inkKey()]=[];
+  wirePendFrom=null; wireHoverPort=null;
+  commitInkTxn(); redrawInk();
+}
 let wirePendFrom=null;    // 1つ目として覚えた端点（{id,port,x,y} か {x,y}）
 let wireDownPt=null;      // 押した画面座標。動いたかどうかの判定に使う
+let pt0=null;             // 押した図面座標（離したときのタップ判定に使う）
+let curItemFromSym=null;  // 押した先の記号（タップならこの記号のボタンを出す）
 let wireMoved=false;      // 10px以上動いたか＝ドラッグとみなす
 let polyDraft=null; // in-progress continuous-line item (tap to add points, double-tap to finish)
 let polyPending=false; // a single pointer is currently down while placing a poly point (suppresses pan)
@@ -4806,33 +4871,19 @@ vp.addEventListener('pointerdown',e=>{
     deselectShape();
     const arr=strokes[inkKey()]=strokes[inkKey()]||[];
     ensureSymbolIds(arr);
+    // 接続点のボタンが出ているなら、まずそれ（いちばん大きな的なので最優先）
+    if(wirePickSym){
+      const p=hitPortBtn(pt,wirePickSym);
+      if(p){ wireTakePort(wirePickSym,p); wireDownPt=null; wireMoved=false; return; }
+      wirePickSym=null;   // ボタン以外を押した＝選び直し。以下の通常処理へ
+    }
     const hp=wireAttachAt(pt,arr,screenTol(WIRE_SNAP_PX),
                           wirePendFrom?wireEnd(wirePendFrom,arr):null);
     const sp=snapGridPt(pt);
-    // ── 2つ目のタップ：1つ目を覚えている状態なら、ここで線を作って終わり
-    if(wirePendFrom){
-      const same = hp && wirePendFrom.id===hp.id && wirePendFrom.port===hp.port;
-      if(!hp && !hitSymbolBody(pt,arr,screenTol(WIRE_BODY_PAD_PX))){
-        // 何も無いところを押した＝取り消し（浮いた端で終わらせたい場合はドラッグを使う）
-        wirePendFrom=null; wireHoverPort=null; redrawInk();
-        toast('配線をやめました','warn');
-      } else if(same){
-        wirePendFrom=null; wireHoverPort=null; redrawInk();
-      } else {
-        const to = hp ? {id:hp.id, port:hp.port, x:hp.x, y:hp.y} : {x:sp.x, y:sp.y};
-        beginInkTxn();
-        arr.push({type:'wire', id:nextItemId(arr,'w'), bend:wireBend,
-                  color:state.inkColor, width:state.inkWidth, dash:state.inkDash,
-                  from:wirePendFrom, to});
-        redoStrokes[inkKey()]=[];
-        wirePendFrom=null; wireHoverPort=null;
-        // 保存は5秒ごとの autosaveNow(false) が変化を見て書き込むので、ここでの呼び出しは不要
-        commitInkTxn(); redrawInk();
-      }
-      wireDownPt=null; wireMoved=false;
-      return;
-    }
-    // ── 1つ目：ドラッグされたらそのまま線を引く。押して離しただけならタップ待ちにする
+    /* v9.8 にあった「2つ目のタップで即座に線を作る」経路は v9.9 で撤去した。
+       つなぐ場所はボタンで選ぶ方式に一本化してある。両方を残すと、記号を押した瞬間に
+       線ができてしまい、ボタンが出る前に決まる（実際に競合して試験が落ちた）。 */
+    // ── ドラッグされたらそのまま線を引く。押して離しただけなら接続点のボタンを出す
     const from = hp ? {id:hp.id, port:hp.port, x:hp.x, y:hp.y} : {x:sp.x, y:sp.y};
     curItem={type:'wire', id:nextItemId(arr,'w'), bend:wireBend,
              color:state.inkColor, width:state.inkWidth, dash:state.inkDash,
@@ -4841,6 +4892,8 @@ vp.addEventListener('pointerdown',e=>{
     redoStrokes[inkKey()]=[];
     wireHoverPort=hp;
     wireDownPt={x:e.clientX, y:e.clientY}; wireMoved=false;
+    pt0=pt;                                          // 離したときに使う押した位置
+    curItemFromSym = hp ? findItemById(arr,hp.id) : hitSymbolBody(pt,arr,screenTol(WIRE_BODY_PAD_PX));
     redrawInk();
   } else if(pointers.size===1 && drawable && state.tool==='pen' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
@@ -5030,20 +5083,43 @@ function endPointer(e){
   if(curItem && curItem.type==='wire'){
     const arr=strokes[inkKey()]||[];
     if(!wireMoved){
-      /* 押して離しただけ＝タップ。線は作らず「1つ目」として覚える（v9.8）。
-         指が記号を覆い隠すドラッグと違い、**離した状態で相手を狙える**のが要点。 */
+      /* 押して離しただけ＝タップ（v9.8→v9.9）。
+         記号を押したなら、その記号の接続点を**大きなボタン**として出す。
+         つなぐ場所を先に選ばせる＝小さいものを狙わせない（吉彦さんの選択）。
+         何も無いところを押したときは取り消し。浮いた端点で終わらせたいときはドラッグを使う。 */
       if(arr[arr.length-1]===curItem) arr.pop();
-      wirePendFrom=curItem.from;
-      wireHoverPort=curItem.from.id?curItem.from:null;
       curItem=null; wireDownPt=null;
-      redrawInk();
-      toast('つなぐ相手を押してください（何も無いところで取り消し）','ok');
+      const tapSym = curItemFromSym || hitSymbolBody(pt0,arr,screenTol(WIRE_BODY_PAD_PX));
+      if(tapSym){
+        wirePickSym=tapSym;
+        redrawInk();
+      } else {
+        wirePickSym=null;
+        if(wirePendFrom){ wirePendFrom=null; wireHoverPort=null; toast('配線をやめました','warn'); }
+        redrawInk();
+      }
     } else {
+      /* 【v9.9 で直した不具合】**離した位置で繋ぎ先を確定し直す。**
+         それまでは curItem.to が「最後の pointermove の位置」のままだった。
+         iOS は素早く離すと、離した位置まで pointermove が来ないことがある
+         （合体イベントの都合で、最後の移動が実際の指の位置より手前で終わる）。
+         その結果、記号の上で離したつもりでも線が少し手前で浮く＝実機で出ていた症状。
+         図面の連続線では v8.4 で「点は指を離した位置で確定する」と直してあり、
+         配線で同じ見落としをしていた。3.11 の「同じ機能が2実装ある」と同じ構造の穴。
+         Playwright のマウスは目標まで細かく動かしてから離すので、この穴は通ってしまう。 */
+      if(typeof e.clientX==='number' && overSheet(e.clientX,e.clientY)){
+        const up=toCanvas(e.clientX,e.clientY);
+        const hp=wireAttachAt(up,arr,screenTol(WIRE_SNAP_PX), wireEnd(curItem.from,arr));
+        const same = hp && curItem.from.id===hp.id && curItem.from.port===hp.port;
+        if(hp && !same) curItem.to={id:hp.id, port:hp.port, x:hp.x, y:hp.y};
+        else if(!hp){ const gp=snapGridPt(up); curItem.to={x:gp.x, y:gp.y}; }
+      }
       // 引かずに離した線は残さない。相手にくっついていれば短くても意味があるので残す
       const a=wireEnd(curItem.from,arr), b=wireEnd(curItem.to,arr);
       const tooShort = !curItem.to.id && Math.hypot(b.x-a.x,b.y-a.y) < screenTol(10);
       if(tooShort && arr[arr.length-1]===curItem) arr.pop();
       curItem=null; wireHoverPort=null; wireDownPt=null; wireMoved=false;
+      wirePendFrom=null; wirePickSym=null;   // ドラッグで引いたら、選びかけは捨てる
       redrawInk();
     }
   }
@@ -5345,6 +5421,21 @@ function redrawInk(){
     /* v9.8：「いま繋がる先」は**指の外側に、太く**出す。記号の絵は画面に合わせた倍率で35px、
        指の接触面は40〜50px＝押している本人には記号も細い破線も見えない。
        当たり箱より外へ回し、太さも上げる。 */
+    /* つなぐ場所のボタン（v9.9）。記号から画面52px外に、直径44pxで出す。
+       押している指（直径40〜50px）と記号の両方を避けた位置に置くのが要点で、
+       ここが重なると「見えないものを狙う」という元の問題に戻る。 */
+    if(wirePickSym){
+      const r=screenTol(PORT_BTN_R_PX);
+      symbolPortsOf(wirePickSym.kind).forEach(p=>{
+        const q=portBtnPt(wirePickSym,p);
+        ctx.beginPath(); ctx.moveTo(wirePickSym.x,wirePickSym.y); ctx.lineTo(q.x,q.y);
+        ctx.lineWidth=screenTol(1.5); ctx.strokeStyle='rgba(59,130,246,.45)'; ctx.stroke();
+        ctx.beginPath(); ctx.arc(q.x,q.y,r,0,Math.PI*2);
+        ctx.fillStyle= wirePendFrom ? 'rgba(34,197,94,.92)' : 'rgba(59,130,246,.92)';
+        ctx.fill();
+        ctx.lineWidth=screenTol(2.5); ctx.strokeStyle='rgba(255,255,255,.92)'; ctx.stroke();
+      });
+    }
     if(wireHoverPort){
       const sym=findItemById(list,wireHoverPort.id);
       if(sym){
@@ -5453,7 +5544,7 @@ function setTool(t){
   if(t!=='shape') deselectShape();
   if(t!=='select') clearMultiSel(); // 選択ツールを離れたら複数選択を解除
   if(t!=='symbol') symSelected=null; // シンボルツールを離れたら選択解除
-  if(t!=='wire'){ wireHoverPort=null; wirePendFrom=null; }
+  if(t!=='wire'){ wireHoverPort=null; wirePendFrom=null; wirePickSym=null; }
   // 配線に入った時点で、既存の記号へ id を振る（v9.5 より前の図面を壊さないための遅延採番）
   if(t==='wire'){ const n=ensureSymbolIds(strokes[inkKey()]); if(n) redrawInk(); }
   if(t!=='pen'){ penEraseMode=false; penErasing=false; } // ペン以外に移ったら消去モード解除
@@ -9100,7 +9191,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v9.8';
+const APP_BUILD='v9.9';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの
@@ -9535,11 +9626,16 @@ async function deletePage(){
    押しっぱなしの状態が見えないと、何を待たれているのか分からなくなる（v9.8）。 */
 function renderWireHint(){
   const el=$('#wireHint'); if(!el) return;
-  const on = state.tool==='wire' && !!wirePendFrom;
+  const on = state.tool==='wire' && (!!wirePendFrom || !!wirePickSym);
   el.classList.toggle('show', on);
+  if(!on) return;
+  const lbl=$('#wireHintLabel');
+  if(lbl) lbl.textContent = wirePickSym
+    ? 'つなぐ場所（○）を押してください'
+    : 'つなぐ相手の記号を押してください';
 }
 $('#wireCancel').addEventListener('click',()=>{
-  wirePendFrom=null; wireHoverPort=null; renderWireHint(); redrawInk();
+  wirePendFrom=null; wireHoverPort=null; wirePickSym=null; renderWireHint(); redrawInk();
 });
 $('#pgPrev').addEventListener('click',()=>stepPage(-1));
 $('#pgNext').addEventListener('click',()=>stepPage(1));

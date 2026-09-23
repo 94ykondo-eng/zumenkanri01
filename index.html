@@ -1487,6 +1487,34 @@
        [ついでに] 図面側の全消去ダイアログの文面「この操作はやり直せません」を直した。v4.1 の
        作成時は事実だったが、v7.29 の beginInkTxn/commitInkTxn 導入で doClearAll も1操作として
        戻せるようになっており、以後ずっと古い文面が残っていた。戻せるのに諦める人が出る。
+
+  build v9.5 (配線図面の基盤：部品につながる線)  —
+       [ねらい] Visio のような配線図を描けるようにする段階1。**線が座標ではなく相手のidを
+       覚えている**ようにするのが本質で、あとは表現の話。置き場所は既存の白紙図面の延長
+       （吉彦さんの選択）＝ピン・写真台帳・バージョン・ドライブ保存がそのまま効く。
+       [データ] type:'wire' を新設。from/to は {id,port,x,y}（部品にくっつく）と {x,y}（浮いている）の
+       2択で、**同じ型に両方入る**。浮いたまま引いた線をあとから部品へ繋ぐ育て方ができる。
+       id を持つ側も x,y を**控えとして持ち続ける**のが要点で、部品を消しても線が原点へ飛ばず
+       その場に残る＝削除時の後始末の経路を作らなくて済む（写真の remapPhotoSrc のような
+       「全域を書き換える」処理を増やさない、という判断）。
+       [追従] 線は描画のたびに wireEnd() で相手の接続点を引き直す。だから**部品を動かすと
+       線が勝手に付いてくる**。移動時に線を書き換える処理は書いていない（書くと、移動の経路が
+       selmove/move/undo と複数あるぶんだけ漏れる）。
+       [接続点] 4方向固定（上下左右）。SYM_PORTS で記号ごとに上書きできる口だけ開けてある
+       （吉彦さんの選択：まず4方向、必要な記号だけ後から）。**回転させない**のは、直交配線は
+       軸に沿うのが前提で、記号を45°回しても線は縦横で入るほうが図面として読みやすいため。
+       [当たり] 接続点の吸着は screenTol(18)＝**画面px基準**。論理座標で測ると拡大率で許容が
+       変わる（v8.4 で踏んだ地雷）。配線ツール中は全接続点を薄い点で出す。繋げる先が見えないと
+       吸着があっても当てずっぽうになる。
+       [経路] orthoRoute は L字か階段だけ。障害物は避けない。避け始めると「思った所を通らない」
+       ほうが現場では困る。手で曲げ点を足す方式は v9.6。
+       [移動] 配線を掴んで動かしたとき、**くっついている端は動かさない**。両端とも繋がっている
+       線は動かない（正しい）。
+       [互換] v9.5 より前に置いた記号には id が無い。ensureSymbolIds() が配線ツールに入った
+       時点で採番する。起動時に全図面へ一括で入れないのは、触っていない図面の保存データを
+       変えないため。
+       [まだ無い] 符号・回路番号（手入力のみの方針）、ケーブル長（集計しない方針）、線種と
+       レイヤ、整列、結線リスト・部材拾いの出力は v9.6／v9.7。
 -->
 <html lang="ja">
 <head>
@@ -2677,7 +2705,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="書き込みの全消去に確認とやり直しを付ける">build v9.4</button>
+          data-desc="配線図面の基盤：部品につながる線（追従・直交）">build v9.5</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2761,6 +2789,10 @@
       </button>
       <button class="shape-btn" id="btnFillToggle" title="四角・円の内側を塗りつぶす">
         <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+      </button>
+      <!-- 配線ツールのときだけ出す（専用パネルを増やさず、色・太さと同じ行に置く） -->
+      <button class="shape-btn on" id="btnWireBend" title="直交（縦横）で配線する">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5v9a2 2 0 002 2h14"/></svg>
       </button>
     </div>
     <button class="tp-collapsed-btn" id="styleCollapsedBtn" title="タップして展開">
@@ -2849,6 +2881,10 @@
     <button class="dock-btn" id="btnSymbol">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="6"/><path d="M10 8.5v3M14 8.5v3M12 16v4M9 22h6"/></svg>
       シンボル
+    </button>
+    <button class="dock-btn" id="btnWire">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M5 7.2V14a2 2 0 002 2h9.8"/></svg>
+      配線
     </button>
     <button class="dock-btn" id="btnPin">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s7-6.3 7-11a7 7 0 10-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
@@ -3874,7 +3910,7 @@ function applyView(){frame.style.transform=`translate(${view.x}px,${view.y}px) s
 const PANEL_KEYS=['shape','style']; // stacking order when two panels share the same spot
 function panelVisible(key){
   if(key==='shape') return state.tool==='shape';
-  if(key==='style') return state.tool==='pen'||state.tool==='shape';
+  if(key==='style') return state.tool==='pen'||state.tool==='shape'||state.tool==='wire'; // 配線も色・太さを使う
   return false;
 }
 function layoutPanels(){
@@ -3954,9 +3990,109 @@ let symbolKind='outlet', symbolSize=44, symbolRot=0, symSelected=null; // 電気
 // ペンモード時の「なぞり消しゴム」（free線のみ対象・図形は対象外）
 let penEraseMode=false;   // 消去モードのオン/オフ
 let penErasing=false;     // なぞり消去ドラッグ中
-const SELECTABLE_TYPES=['rect','ellipse','line','arrow','poly'];
+/* ===== 配線（v9.5） =====
+   Visio でいう「図形をつないだ線が、図形を動かすと付いてくる」を成立させる部分。
+   要は **線が座標ではなく相手のidを覚えている** というだけのこと。
+
+   {type:'wire', id, color, width, dash, bend:'ortho'|'free',
+    from:{id:'s7', port:'r', x, y} | {x, y},
+    to:  {...同じ}}
+
+   from/to は「部品id＋接続点」と「ただの座標」の2択。**同じ型に両方入る**ので、
+   浮いたまま引いた線をあとから部品にくっつける、という育て方ができる。
+   id を持つ側も x,y を**控えとして持ち続ける**のが要点で、これで部品を消しても
+   線が原点へ飛ばずその場に残る（消したときの後始末の経路を作らなくて済む）。 */
+const WIRE_PORTS=['t','r','b','l'];   // 既定は4方向（上・右・下・左）
+const SYM_PORTS={};                   // kind → 接続点の配列。記号ごとに増やしたくなったらここへ
+function symbolPortsOf(kind){ return SYM_PORTS[kind]||WIRE_PORTS; }
+// 記号の当たり半径。hitSymbol / shapeBounds と同じ 0.7 倍をここでも使う（ずれると接続点が絵から浮く）
+function symbolHalf(it){ return (it.size||44)*0.7; }
+/* 接続点は**回転させない**（キャンバス座標で常に上下左右）。直交配線は軸に沿うのが前提で、
+   記号を45°回しても線は縦横で入ってくるほうが図面として読みやすいため。 */
+function symbolPortPt(it,port){
+  const h=symbolHalf(it);
+  if(port==='t') return {x:it.x, y:it.y-h};
+  if(port==='b') return {x:it.x, y:it.y+h};
+  if(port==='l') return {x:it.x-h, y:it.y};
+  return {x:it.x+h, y:it.y};
+}
+function portDir(port){ return (port==='l'||port==='r') ? 'h' : 'v'; }
+function findItemById(arr,id){
+  if(!id) return null;
+  for(const it of (arr||[])) if(it.id===id) return it;
+  return null;
+}
+// 既存の配列を見て次のidを決める。採番の連番はデータに持たせない（版をまたいで矛盾するため）
+function nextItemId(arr,prefix){
+  let max=0;
+  for(const it of (arr||[])){
+    if(typeof it.id==='string' && it.id[0]===prefix){
+      const n=parseInt(it.id.slice(1),10); if(n>max) max=n;
+    }
+  }
+  return prefix+(max+1);
+}
+/* v9.5 より前に置いた記号には id が無い。配線を引こうとした時点で採番する。
+   起動時に全図面へ一括で入れないのは、触っていない図面の保存データを変えないため。 */
+function ensureSymbolIds(arr){
+  if(!arr) return 0;
+  let n=0, max=0;
+  for(const it of arr){ if(typeof it.id==='string'&&it.id[0]==='s'){ const v=parseInt(it.id.slice(1),10); if(v>max)max=v; } }
+  for(const it of arr){ if(it.type==='symbol' && !it.id){ it.id='s'+(++max); n++; } }
+  return n;
+}
+/* 端点を実座標に解決する。id があれば相手の接続点を引き、控えの x,y も更新する。
+   相手が見つからない（消された）ときは控えの座標をそのまま使う。 */
+function wireEnd(end,arr){
+  if(end && end.id){
+    const sym=findItemById(arr,end.id);
+    if(sym && sym.type==='symbol'){
+      const p=symbolPortPt(sym,end.port||'r');
+      end.x=p.x; end.y=p.y; return p;
+    }
+  }
+  return {x:(end&&end.x)||0, y:(end&&end.y)||0};
+}
+/* 直交ルーティング。入口の向き(ad)と出口の向き(bd)から、L字か階段かを決めるだけ。
+   経路を凝らない（障害物を避けない）のは、避け始めると「思った所を通らない」ほうが
+   現場では困るため。曲げたいときは手で点を足す方式を v9.6 で足す。 */
+function orthoRoute(a,ad,b,bd){
+  if(a.x===b.x && a.y===b.y) return [a,b];
+  if(ad==='h' && bd==='v') return [a,{x:b.x,y:a.y},b];
+  if(ad==='v' && bd==='h') return [a,{x:a.x,y:b.y},b];
+  if(ad==='h'){ const m=(a.x+b.x)/2; return [a,{x:m,y:a.y},{x:m,y:b.y},b]; }
+  const m=(a.y+b.y)/2; return [a,{x:a.x,y:m},{x:b.x,y:m},b];
+}
+function wirePath(item,arr){
+  const a=wireEnd(item.from,arr), b=wireEnd(item.to,arr);
+  if(item.bend==='free') return [a,b];
+  const dx=Math.abs(b.x-a.x), dy=Math.abs(b.y-a.y);
+  // 部品にくっついている側は接続点の向きが入口の向き。浮いている側は相手に合わせる
+  const ad = item.from.id ? portDir(item.from.port||'r') : (dx>=dy?'h':'v');
+  const bd = item.to.id   ? portDir(item.to.port||'l')   : (ad==='h'?'v':'h');
+  return orthoRoute(a,ad,b,bd);
+}
+// 画面px基準の当たりで接続点を拾う（論理座標で測ると拡大率で許容が変わる＝v8.4の地雷）
+function hitPort(pt,arr,tolU){
+  for(let i=(arr||[]).length-1;i>=0;i--){
+    const it=arr[i];
+    if(it.type!=='symbol'||!it.id) continue;
+    for(const p of symbolPortsOf(it.kind)){
+      const q=symbolPortPt(it,p);
+      if(Math.hypot(pt.x-q.x,pt.y-q.y)<tolU) return {id:it.id, port:p, x:q.x, y:q.y};
+    }
+  }
+  return null;
+}
+const SELECTABLE_TYPES=['rect','ellipse','line','arrow','poly','wire'];
 function shapeHandles(item){
   if(item.type==='text') return {}; // 文字はハンドルなし（サイズは編集ダイアログで）
+  // 配線は両端だけ掴める。掴んで部品の接続点へ落とせば繋ぎ替えになる（v9.5）
+  if(item.type==='wire'){
+    const arr=strokes[inkKey()]||[];
+    const a=wireEnd(item.from,arr), b=wireEnd(item.to,arr);
+    return {p1:{x:a.x,y:a.y}, p2:{x:b.x,y:b.y}};
+  }
   if(item.type==='rect'||item.type==='ellipse'){
     return {nw:{x:item.x1,y:item.y1},ne:{x:item.x2,y:item.y1},sw:{x:item.x1,y:item.y2},se:{x:item.x2,y:item.y2}};
   }
@@ -4000,6 +4136,13 @@ function eraseInkAt(pt){
 }
 function pointInShapeBody(item,pt){
   const tol=14; // 輪郭の当たり幅（直線・連続線と同じ感覚）
+  if(item.type==='wire'){
+    const path=wirePath(item, strokes[inkKey()]||[]);
+    for(let i=0;i<path.length-1;i++){
+      if(distToSegment(pt,path[i].x,path[i].y,path[i+1].x,path[i+1].y)<tol) return true;
+    }
+    return false;
+  }
   if(item.type==='rect'){
     // 4辺のいずれかの近くだけを「掴める線」とする（内側は素通し＝重ねて描ける）
     const x0=Math.min(item.x1,item.x2), x1=Math.max(item.x1,item.x2);
@@ -4028,6 +4171,11 @@ function pointInShapeBody(item,pt){
 }
 function shapeBounds(item){
   if(item.type==='text') return textBBox(item);
+  if(item.type==='wire'){
+    const path=wirePath(item, strokes[inkKey()]||[]);
+    const xs=path.map(p=>p.x), ys=path.map(p=>p.y);
+    return {x0:Math.min(...xs),x1:Math.max(...xs),y0:Math.min(...ys),y1:Math.max(...ys)};
+  }
   if(item.type==='poly'){
     const xs=item.pts.map(p=>p.x), ys=item.pts.map(p=>p.y);
     return {x0:Math.min(...xs),x1:Math.max(...xs),y0:Math.min(...ys),y1:Math.max(...ys)};
@@ -4035,7 +4183,7 @@ function shapeBounds(item){
   return {x0:Math.min(item.x1,item.x2),x1:Math.max(item.x1,item.x2),y0:Math.min(item.y1,item.y2),y1:Math.max(item.y1,item.y2)};
 }
 /* ===== 範囲/自由選択（選択ツール）：図形＋ペン線を複数選択 ===== */
-const SEL_TYPES=['free','rect','ellipse','line','arrow','poly','text','symbol']; // 図形＋ペン＋文字＋電気シンボル
+const SEL_TYPES=['free','rect','ellipse','line','arrow','poly','text','symbol','wire']; // 図形＋ペン＋文字＋電気シンボル＋配線
 const CANVAS_FONT='"IBM Plex Sans JP","IBM Plex Sans",system-ui,sans-serif';
 function textLines(item){ return String(item.text||'').split('\n'); }
 function textBBox(item){ // 文字の外接矩形（縦書き対応）
@@ -4250,11 +4398,20 @@ function selScaleFactors(drag, pt, keepRatio, step){
   return {sx,sy,ox,oy};
 }
 function moveItemBy(item, dx, dy, orig){
+  if(item.type==='wire'){
+    // **くっついている端は動かさない。** 動かすと部品から線が外れて見える。
+    // 浮いている端だけが付いてくる＝両端とも繋がっている線は動かない（正しい）
+    if(!item.from.id){ item.from.x=orig.from.x+dx; item.from.y=orig.from.y+dy; }
+    if(!item.to.id){   item.to.x  =orig.to.x  +dx; item.to.y  =orig.to.y  +dy; }
+    return;
+  }
   if(item.type==='free'||item.type==='poly'){ item.pts.forEach((q,i)=>{ q.x=orig.pts[i].x+dx; q.y=orig.pts[i].y+dy; }); }
   else if(item.type==='text'||item.type==='symbol'){ item.x=orig.x+dx; item.y=orig.y+dy; }
   else { item.x1=orig.x1+dx; item.y1=orig.y1+dy; item.x2=orig.x2+dx; item.y2=orig.y2+dy; }
 }
-function snapItem(item){ return (item.type==='free'||item.type==='poly') ? {pts:item.pts.map(q=>({x:q.x,y:q.y}))} : (item.type==='text'||item.type==='symbol') ? {x:item.x,y:item.y} : {x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2}; }
+function snapItem(item){
+  if(item.type==='wire') return {from:Object.assign({},item.from), to:Object.assign({},item.to)};
+  return (item.type==='free'||item.type==='poly') ? {pts:item.pts.map(q=>({x:q.x,y:q.y}))} : (item.type==='text'||item.type==='symbol') ? {x:item.x,y:item.y} : {x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2}; }
 function hitTestShape(pt){
   const arr=strokes[inkKey()]||[];
   for(let i=arr.length-1;i>=0;i--){
@@ -4271,6 +4428,8 @@ function screenTol(px){ // convert a screen-pixel tolerance into canvas-unit spa
   return px*CW/canvas.getBoundingClientRect().width;
 }
 function deselectShape(){ selectedItem=null; dragMode=null; }
+let wireBend='ortho';     // 配線の曲げ方。'ortho'＝縦横／'free'＝斜め直線（v9.5）
+let wireHoverPort=null;   // 引いている最中に吸いつく先（描画で強調する）
 let polyDraft=null; // in-progress continuous-line item (tap to add points, double-tap to finish)
 let polyPending=false; // a single pointer is currently down while placing a poly point (suppresses pan)
 let hoverPt=null; // live rubber-band endpoint: follows mouse/pen hover, or a finger while pressed
@@ -4371,7 +4530,7 @@ vp.addEventListener('pointerdown',e=>{
   // 指で描ける/ピンを刺せるのは「ペンシルが触れていない かつ 直近(PEN_GRACE)にペンを使っていない」とき。
   // ＝ペンシル利用中〜直後は手のひらを無視し、ペンシルを止めれば指で描ける。
   const inputCanDraw = e.pointerType!=='touch' || (Date.now()-lastPenTs > PEN_GRACE);
-  const drawTool = state.tool==='pen'||state.tool==='shape'||state.tool==='measure'||state.tool==='select';
+  const drawTool = state.tool==='pen'||state.tool==='shape'||state.tool==='measure'||state.tool==='select'||state.tool==='wire';
   const drawable = drawTool && canPinEdit() && inputCanDraw;
   const pinPlacing = state.tool==='pin' && canPinEdit() && inputCanDraw; // ④ ピン設置中も1本指移動を無効化
   if(pointers.size===1) panLock = (drawTool || state.tool==='pin' || state.tool==='text' || state.tool==='symbol') && canPinEdit(); // 作図/選択/ピン/文字/シンボル中は1本指で画面を動かさない
@@ -4395,6 +4554,22 @@ vp.addEventListener('pointerdown',e=>{
       polyPending=true; // suppress single-finger pan; the point commits on release
       updatePolyHover(e.clientX,e.clientY);
     }
+  } else if(pointers.size===1 && drawable && state.tool==='wire' && overSheet(e.clientX,e.clientY)){
+    const pt=toCanvas(e.clientX,e.clientY);
+    deselectShape();
+    const arr=strokes[inkKey()]=strokes[inkKey()]||[];
+    ensureSymbolIds(arr);
+    // 近くに接続点があればそこから。無ければ方眼の交点から（浮いた端点）
+    const hp=hitPort(pt,arr,screenTol(18));
+    const sp=snapGridPt(pt);
+    const from = hp ? {id:hp.id, port:hp.port, x:hp.x, y:hp.y} : {x:sp.x, y:sp.y};
+    curItem={type:'wire', id:nextItemId(arr,'w'), bend:wireBend,
+             color:state.inkColor, width:state.inkWidth, dash:state.inkDash,
+             from, to:{x:(hp?hp.x:sp.x), y:(hp?hp.y:sp.y)}};
+    arr.push(curItem);
+    redoStrokes[inkKey()]=[];
+    wireHoverPort=hp;
+    redrawInk();
   } else if(pointers.size===1 && drawable && state.tool==='pen' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
     if(penEraseMode){ penErasing=true; eraseInkAt(pt); return; } // なぞり消去（描画しない）
@@ -4483,6 +4658,12 @@ vp.addEventListener('pointermove',e=>{
         else if(h==='sw'){item.x1=rp.x;item.y2=rp.y;} else {item.x2=rp.x;item.y2=rp.y;}
       } else if(item.type==='poly'){
         const idx=+h.slice(1); item.pts[idx].x=rp.x; item.pts[idx].y=rp.y;
+      } else if(item.type==='wire'){
+        // 端点を接続点へ落とせば繋ぎ替え、何も無いところなら浮いた端点になる（v9.5）
+        const arr=strokes[inkKey()]||[];
+        const hp=hitPort(pt,arr,screenTol(18));
+        const end = hp ? {id:hp.id, port:hp.port, x:hp.x, y:hp.y} : {x:rp.x, y:rp.y};
+        if(h==='p1') item.from=end; else item.to=end;
       } else {
         if(h==='p1'){item.x1=rp.x;item.y1=rp.y;} else {item.x2=rp.x;item.y2=rp.y;}
       }
@@ -4491,6 +4672,17 @@ vp.addEventListener('pointermove',e=>{
   }
   if(curItem){
     const pt=toCanvas(e.clientX,e.clientY);
+    if(curItem.type==='wire'){
+      const arr=strokes[inkKey()]||[];
+      // 自分自身は吸着先から外す（引いている線の始点の部品にすぐ戻ってしまうため、
+      // 同じ部品の**別の**接続点へは繋げられるようにしてある）
+      const hp=hitPort(pt,arr,screenTol(18));
+      const same = hp && curItem.from.id===hp.id && curItem.from.port===hp.port;
+      wireHoverPort = same ? null : hp;
+      if(wireHoverPort){ curItem.to={id:wireHoverPort.id, port:wireHoverPort.port, x:wireHoverPort.x, y:wireHoverPort.y}; }
+      else { const gp=snapGridPt(pt); curItem.to={x:gp.x, y:gp.y}; }
+      redrawInk(); return;
+    }
     if(curItem.type==='free'){
       // Apple Pencil の間引かれた中間点＋筆圧を拾う
       const evs = (typeof e.getCoalescedEvents==='function') ? e.getCoalescedEvents() : null;
@@ -4561,6 +4753,15 @@ function endPointer(e){
     } else { computeSelection(); }
     selDraft=null; redrawInk(); updateSelectBar();
   }
+  if(curItem && curItem.type==='wire'){
+    // 引かずに離しただけ（＝線になっていない）ものは残さない。
+    // ただし相手の部品にくっついていれば、短くても意味のある線なので残す
+    const arr=strokes[inkKey()]||[];
+    const a=wireEnd(curItem.from,arr), b=wireEnd(curItem.to,arr);
+    const tooShort = !curItem.to.id && Math.hypot(b.x-a.x,b.y-a.y) < screenTol(10);
+    if(tooShort && arr[arr.length-1]===curItem) arr.pop();
+    curItem=null; wireHoverPort=null; redrawInk();
+  }
   if(curItem){
     // discard a degenerate shape created by a mere tap with no drag (zero size, invisible)
     if(curItem.type!=='free' && curItem.x1===curItem.x2 && curItem.y1===curItem.y2){
@@ -4595,8 +4796,10 @@ function endPointer(e){
     if(hit){ symSelected=hit; symbolSize=hit.size; symbolRot=hit.rot||0; }
     else {
       beginInkTxn();
-      const item={type:'symbol', kind:symbolKind, x:pt.x, y:pt.y, size:symbolSize, rot:symbolRot, color:state.inkColor};
-      (strokes[inkKey()]=strokes[inkKey()]||[]).push(item);
+      const arr0=strokes[inkKey()]=strokes[inkKey()]||[];
+      // id は置いた時点で付ける（あとから配線を引くときに採番し直さなくて済む）
+      const item={type:'symbol', id:nextItemId(arr0,'s'), kind:symbolKind, x:pt.x, y:pt.y, size:symbolSize, rot:symbolRot, color:state.inkColor};
+      arr0.push(item);
       commitInkTxn();
       symSelected=item;
     }
@@ -4798,6 +5001,20 @@ function drawInkItem(c, item, draftInfo){
       c.beginPath(); c.moveTo(last.x,last.y); c.lineTo(draftInfo.hoverPt.x,draftInfo.hoverPt.y); c.stroke();
       c.restore();
     }
+  } else if(item.type==='wire'){
+    const arr=strokes[inkKey()]||[];
+    const path=wirePath(item,arr);
+    c.beginPath();
+    path.forEach((q,i)=>i?c.lineTo(q.x,q.y):c.moveTo(q.x,q.y));
+    c.stroke();
+    // くっついている端に小さな点を打つ。**繋がっているかどうかが見て分かる**ことが
+    // この機能の生命線で、分からないと「動かしたら外れた」の原因が追えない
+    c.setLineDash([]);
+    [[item.from,path[0]],[item.to,path[path.length-1]]].forEach(([end,p])=>{
+      if(!end.id) return;
+      c.beginPath(); c.arc(p.x,p.y,Math.max(3.5,(item.width||3.5)*1.1),0,Math.PI*2);
+      c.fillStyle=item.color||'#E5372A'; c.fill();
+    });
   } else if(item.type==='measure'){
     drawMeasure(item);
   }
@@ -4819,6 +5036,22 @@ function redrawInk(){
   if(!curItem){ // 確定済みストロークだけをキャッシュ（ペン描画中の高速合成に使う。選択枠などは含めない）
     if(bgCanvas.width!==CW||bgCanvas.height!==CH){ bgCanvas.width=CW; bgCanvas.height=CH; }
     bgCtx.clearRect(0,0,CW,CH); bgCtx.drawImage(canvas,0,0);
+  }
+  if(state.tool==='wire'){
+    // 配線ツールのときだけ、全部品の接続点を薄く出す。**繋げる先が見えない**と
+    // 吸着があっても当てずっぽうになる（v9.5）
+    ctx.save(); ctx.setLineDash([]);
+    const tol=screenTol(18);
+    list.forEach(it=>{
+      if(it.type!=='symbol'||!it.id) return;
+      symbolPortsOf(it.kind).forEach(p=>{
+        const q=symbolPortPt(it,p);
+        const near=wireHoverPort && wireHoverPort.id===it.id && wireHoverPort.port===p;
+        ctx.beginPath(); ctx.arc(q.x,q.y,near?tol*0.55:screenTol(4.5),0,Math.PI*2);
+        ctx.fillStyle=near?'rgba(59,130,246,.85)':'rgba(59,130,246,.35)'; ctx.fill();
+      });
+    });
+    ctx.restore();
   }
   if(selectedItem){
     ctx.save();
@@ -4913,6 +5146,9 @@ function setTool(t){
   if(t!=='shape') deselectShape();
   if(t!=='select') clearMultiSel(); // 選択ツールを離れたら複数選択を解除
   if(t!=='symbol') symSelected=null; // シンボルツールを離れたら選択解除
+  if(t!=='wire') wireHoverPort=null;
+  // 配線に入った時点で、既存の記号へ id を振る（v9.5 より前の図面を壊さないための遅延採番）
+  if(t==='wire'){ const n=ensureSymbolIds(strokes[inkKey()]); if(n) redrawInk(); }
   if(t!=='pen'){ penEraseMode=false; penErasing=false; } // ペン以外に移ったら消去モード解除
   polyPending=false;
   // ピンツールに切り替えたら、隠したままだと置いたピンが見えないので自動で表示に戻す
@@ -4923,10 +5159,14 @@ function setTool(t){
   $('#btnText').classList.toggle('on',t==='text');
   $('#btnShape').classList.toggle('on',t==='shape');
   $('#btnSymbol').classList.toggle('on',t==='symbol');
+  $('#btnWire').classList.toggle('on',t==='wire');
+  // 塗りつぶしは図形だけの話、曲げ方は配線だけの話。同じ行に置いているので出し分ける
+  $('#btnFillToggle').style.display = t==='wire' ? 'none' : '';
+  $('#btnWireBend').style.display   = t==='wire' ? '' : 'none';
   $('#btnPin').classList.toggle('on',t==='pin');
   $('#btnMeasure').classList.toggle('on',t==='measure');
   $('#btnSelect').classList.toggle('on',t==='select');
-  vp.classList.toggle('placing',t==='pin'||t==='shape'||t==='measure');
+  vp.classList.toggle('placing',t==='pin'||t==='shape'||t==='measure'||t==='wire');
   layoutPanels(); updateCollapsedGlyphs(); updateMeasureBar(); updateSelectBar(); updateSymbolPanel();
   refreshInkBtns(); redrawInk();
   // ツール切替時の説明トーストは廃止（v7.82）。図面が隠れて操作の邪魔になるため。
@@ -4938,6 +5178,15 @@ $('#btnPen').addEventListener('click',()=>{
 });
 $('#btnShape').addEventListener('click',()=>{
   const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('shape');
+});
+$('#btnWire').addEventListener('click',()=>{
+  const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('wire');
+});
+$('#btnWireBend').addEventListener('click',()=>{
+  wireBend = wireBend==='ortho' ? 'free' : 'ortho';
+  $('#btnWireBend').classList.toggle('on', wireBend==='ortho');
+  $('#btnWireBend').title = wireBend==='ortho' ? '直交（縦横）で配線する' : '斜めの直線で配線する';
+  toast(wireBend==='ortho'?'配線：縦横に曲げます':'配線：斜めの直線で引きます','ok');
 });
 $('#shapeRow').querySelectorAll('.shape-btn[data-shape]').forEach(btn=>btn.addEventListener('click',()=>{
   if(polyDraft && state.shapeType==='poly' && btn.dataset.shape!=='poly') finishPoly();
@@ -8544,7 +8793,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v9.4';
+const APP_BUILD='v9.5';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの

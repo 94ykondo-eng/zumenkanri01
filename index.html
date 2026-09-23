@@ -1570,6 +1570,25 @@
        どこに付くのか分からないのが不安のもとなので、**付く先を必ず目で見せる**。
        [やっていない] 線から線への分岐（T字）は from/to に線上の位置を持たせる必要があり、
        データ構造が増えるので別ビルドにした。配線図では幹線から枝を出すので、機能の穴ではある。
+
+  build v9.8 (配線をタップ→タップでも繋げる)  —
+       [きっかけ] v9.7 でも「狙いにくい」。画面上の実寸を測って、**許容の問題ではない**と分かった。
+       画面に合わせた倍率で 記号の絵35px／本体の当たり箱69px／繋がる範囲は中心から±55px。
+       範囲そのものは狭くない。問題は**指の接触面（直径40〜50px）が記号を完全に覆い隠す**こと。
+       押した瞬間に記号が見えなくなり、ドラッグは「離した位置」で確定するので、
+       **どこに付くのか見ながら合わせられない**。数字をいくら動かしても解決しない種類の問題。
+       [答え＝タップ→タップ] 1つ目を押して離す→覚える→2つ目を押すと繋がる。指を離した状態で
+       相手を狙えるので、見ながら合わせられる。**ドラッグは残す**（速い人はそちらが速い）。
+       押して離しただけか引いたかは、画面10px動いたかで分ける（長押し時間は見ない。
+       ペンは置いた瞬間に少し滑るので、時間で分けると取りこぼす）。
+       [取り消し] 何も無いところを押すと取り消し。「やめる」ボタンも出す。
+       トーストは消えてしまうので、**待っている状態そのもの**を画面に出しておく（.wire-hint）。
+       出す場所はドック（下）とページバー（左上）を避けた下寄りの中央。
+       [広げた] 記号の当たり箱の外に画面16pxの余白を足し、**いちばん近い記号**を返すようにした。
+       多少外しても拾えないと、隠れた状態では合わせられない。
+       [見せ方] 「いま繋がる先」は当たり箱より**外**に、太さ3pxの角丸枠で出す。
+       指の下に細い破線を描いても、押している本人には見えない。
+       1つ目を覚えている間は緑、ドラッグ中は青と色を分ける。
 -->
 <html lang="ja">
 <head>
@@ -2282,6 +2301,14 @@
   }
 
   /* ===== measure tool ===== */
+  /* 配線のタップ待ち（v9.8）。ドック（下）とページバー（左上）を避けて、下寄りの中央に出す */
+  .wire-hint{position:absolute;left:50%;transform:translateX(-50%);bottom:96px;z-index:37;
+    display:none;align-items:center;gap:10px;
+    background:rgba(34,197,94,.95);color:#06210F;border-radius:12px;padding:9px 10px 9px 14px;
+    font-size:13px;font-weight:800;box-shadow:0 8px 24px rgba(0,0,0,.45);white-space:nowrap}
+  .wire-hint.show{display:flex}
+  .wire-hint button{background:rgba(0,0,0,.18);border:none;color:#06210F;
+    border-radius:8px;height:32px;padding:0 12px;font-size:12.5px;font-weight:800}
   /* ページバー（v9.6）。計測バーが中央なので、こちらは左上に置いて重ならないようにする */
   .page-bar{position:absolute;top:14px;left:14px;display:none;align-items:center;gap:4px;z-index:36;
     background:rgba(22,28,37,.94);backdrop-filter:blur(10px);
@@ -2782,7 +2809,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="配線が繋がりやすいように（接続点の位置・記号本体で吸着）">build v9.7</button>
+          data-desc="配線をタップ→タップでも繋げる（指で隠れない）">build v9.8</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2815,6 +2842,12 @@
 
   <!-- pins float in viewport space (constant screen size, anchored to drawing coords) -->
   <div class="pin-layer" id="pinLayer"></div>
+
+  <!-- 配線のタップ待ち（v9.8）。トーストは消えるので、状態そのものを出しておく -->
+  <div class="wire-hint" id="wireHint">
+    <span>つなぐ相手の記号を押してください</span>
+    <button id="wireCancel">やめる</button>
+  </div>
 
   <!-- ページバー（v9.6）：図面を開いている間だけ出す。1ページでも出すのは「＋」を見つけてもらうため -->
   <div class="page-bar" id="pageBar">
@@ -4244,15 +4277,23 @@ function hitPort(pt,arr,tolU){
   }
   return best;
 }
-// 記号の本体（当たり箱の中）に当たったか
-function hitSymbolBody(pt,arr){
+/* 記号の本体に当たったか。v9.8：当たり箱の外にも余白（画面16px）を足し、
+   **いちばん近い記号**を返す。指の接触面は直径40〜50pxあり、記号の絵は画面に合わせた倍率で
+   35px しかない＝押した瞬間に記号は指の下に完全に隠れる。多少外しても拾えないと合わせられない。 */
+const WIRE_BODY_PAD_PX=16;
+function hitSymbolBody(pt,arr,padU){
+  const pad=(padU==null)?0:padU;
+  let best=null, bd=Infinity;
   for(let i=(arr||[]).length-1;i>=0;i--){
     const it=arr[i];
     if(it.type!=='symbol'||!it.id) continue;
-    const h=symbolHalf(it);
-    if(pt.x>=it.x-h && pt.x<=it.x+h && pt.y>=it.y-h && pt.y<=it.y+h) return it;
+    const h=symbolHalf(it)+pad;
+    if(pt.x>=it.x-h && pt.x<=it.x+h && pt.y>=it.y-h && pt.y<=it.y+h){
+      const d=Math.hypot(pt.x-it.x, pt.y-it.y);
+      if(d<bd){ bd=d; best=it; }
+    }
   }
-  return null;
+  return best;
 }
 /* 記号のどの接続点に繋ぐかを、**線が来た方向**から選ぶ。
    右から来たら右、下から来たら下。Visio で図形に落としたときの感覚がこれ。 */
@@ -4275,7 +4316,7 @@ function pickPort(sym,fromPt){
 function wireAttachAt(pt,arr,tolU,otherPt){
   const hp=hitPort(pt,arr,tolU);
   if(hp) return hp;
-  const sym=hitSymbolBody(pt,arr);
+  const sym=hitSymbolBody(pt,arr,screenTol(WIRE_BODY_PAD_PX));
   if(!sym) return null;
   const s=(sym.size||44);
   const nearCenter = Math.abs(pt.x-sym.x)<s*0.15 && Math.abs(pt.y-sym.y)<s*0.15;
@@ -4629,6 +4670,13 @@ function screenTol(px){ // convert a screen-pixel tolerance into canvas-unit spa
 function deselectShape(){ selectedItem=null; dragMode=null; }
 let wireBend='ortho';     // 配線の曲げ方。'ortho'＝縦横／'free'＝斜め直線（v9.5）
 let wireHoverPort=null;   // 引いている最中に吸いつく先（描画で強調する）
+/* タップ→タップで繋ぐ（v9.8）。ドラッグだけだと、指が記号を覆い隠したまま
+   「離した位置」で確定するので、どこに付くのか見ながら合わせられない。
+   1つ目を押して離す→wirePendFrom に覚える→2つ目を押すと線ができる。
+   ドラッグは従来どおり残す（速い人はそちらのほうが速い）。 */
+let wirePendFrom=null;    // 1つ目として覚えた端点（{id,port,x,y} か {x,y}）
+let wireDownPt=null;      // 押した画面座標。動いたかどうかの判定に使う
+let wireMoved=false;      // 10px以上動いたか＝ドラッグとみなす
 let polyDraft=null; // in-progress continuous-line item (tap to add points, double-tap to finish)
 let polyPending=false; // a single pointer is currently down while placing a poly point (suppresses pan)
 let hoverPt=null; // live rubber-band endpoint: follows mouse/pen hover, or a finger while pressed
@@ -4709,7 +4757,7 @@ let panLock=false; // 作図ツール中は1本指で画面を動かさない（
 let lastPenTs=0; const PEN_GRACE=450; // 直近にペンシルを使った時刻。ペン中＋直後の一瞬だけ指を無視し、以降は指で描ける
 function penDown(){ for(const p of pointers.values()) if(p.type==='pen') return true; return false; }
 vp.addEventListener('pointerdown',e=>{
-  if(e.target.closest('.dock,.hint-chip,.tool-panel,.pin,.measure-bar,.symbol-panel,.page-bar'))return;
+  if(e.target.closest('.dock,.hint-chip,.tool-panel,.pin,.measure-bar,.symbol-panel,.page-bar,.wire-hint'))return;
   // ① パームリジェクション：Apple Pencil が触れている間は指タッチを一切拾わない（手のひら・指の誤描画/誤移動を防止）
   if(e.pointerType==='touch' && penDown()) return;
   if(e.pointerType==='pen'){
@@ -4758,9 +4806,33 @@ vp.addEventListener('pointerdown',e=>{
     deselectShape();
     const arr=strokes[inkKey()]=strokes[inkKey()]||[];
     ensureSymbolIds(arr);
-    // 近くに接続点、または記号の本体ならそこから。無ければ方眼の交点から（浮いた端点）
-    const hp=wireAttachAt(pt,arr,screenTol(WIRE_SNAP_PX));
+    const hp=wireAttachAt(pt,arr,screenTol(WIRE_SNAP_PX),
+                          wirePendFrom?wireEnd(wirePendFrom,arr):null);
     const sp=snapGridPt(pt);
+    // ── 2つ目のタップ：1つ目を覚えている状態なら、ここで線を作って終わり
+    if(wirePendFrom){
+      const same = hp && wirePendFrom.id===hp.id && wirePendFrom.port===hp.port;
+      if(!hp && !hitSymbolBody(pt,arr,screenTol(WIRE_BODY_PAD_PX))){
+        // 何も無いところを押した＝取り消し（浮いた端で終わらせたい場合はドラッグを使う）
+        wirePendFrom=null; wireHoverPort=null; redrawInk();
+        toast('配線をやめました','warn');
+      } else if(same){
+        wirePendFrom=null; wireHoverPort=null; redrawInk();
+      } else {
+        const to = hp ? {id:hp.id, port:hp.port, x:hp.x, y:hp.y} : {x:sp.x, y:sp.y};
+        beginInkTxn();
+        arr.push({type:'wire', id:nextItemId(arr,'w'), bend:wireBend,
+                  color:state.inkColor, width:state.inkWidth, dash:state.inkDash,
+                  from:wirePendFrom, to});
+        redoStrokes[inkKey()]=[];
+        wirePendFrom=null; wireHoverPort=null;
+        // 保存は5秒ごとの autosaveNow(false) が変化を見て書き込むので、ここでの呼び出しは不要
+        commitInkTxn(); redrawInk();
+      }
+      wireDownPt=null; wireMoved=false;
+      return;
+    }
+    // ── 1つ目：ドラッグされたらそのまま線を引く。押して離しただけならタップ待ちにする
     const from = hp ? {id:hp.id, port:hp.port, x:hp.x, y:hp.y} : {x:sp.x, y:sp.y};
     curItem={type:'wire', id:nextItemId(arr,'w'), bend:wireBend,
              color:state.inkColor, width:state.inkWidth, dash:state.inkDash,
@@ -4768,6 +4840,7 @@ vp.addEventListener('pointerdown',e=>{
     arr.push(curItem);
     redoStrokes[inkKey()]=[];
     wireHoverPort=hp;
+    wireDownPt={x:e.clientX, y:e.clientY}; wireMoved=false;
     redrawInk();
   } else if(pointers.size===1 && drawable && state.tool==='pen' && overSheet(e.clientX,e.clientY)){
     const pt=toCanvas(e.clientX,e.clientY);
@@ -4874,6 +4947,7 @@ vp.addEventListener('pointermove',e=>{
     const pt=toCanvas(e.clientX,e.clientY);
     if(curItem.type==='wire'){
       const arr=strokes[inkKey()]||[];
+      if(wireDownPt && Math.hypot(e.clientX-wireDownPt.x, e.clientY-wireDownPt.y)>10) wireMoved=true;
       // 自分自身は吸着先から外す（引いている線の始点の部品にすぐ戻ってしまうため、
       // 同じ部品の**別の**接続点へは繋げられるようにしてある）
       const hp=wireAttachAt(pt,arr,screenTol(WIRE_SNAP_PX), wireEnd(curItem.from,arr));
@@ -4954,13 +5028,24 @@ function endPointer(e){
     selDraft=null; redrawInk(); updateSelectBar();
   }
   if(curItem && curItem.type==='wire'){
-    // 引かずに離しただけ（＝線になっていない）ものは残さない。
-    // ただし相手の部品にくっついていれば、短くても意味のある線なので残す
     const arr=strokes[inkKey()]||[];
-    const a=wireEnd(curItem.from,arr), b=wireEnd(curItem.to,arr);
-    const tooShort = !curItem.to.id && Math.hypot(b.x-a.x,b.y-a.y) < screenTol(10);
-    if(tooShort && arr[arr.length-1]===curItem) arr.pop();
-    curItem=null; wireHoverPort=null; redrawInk();
+    if(!wireMoved){
+      /* 押して離しただけ＝タップ。線は作らず「1つ目」として覚える（v9.8）。
+         指が記号を覆い隠すドラッグと違い、**離した状態で相手を狙える**のが要点。 */
+      if(arr[arr.length-1]===curItem) arr.pop();
+      wirePendFrom=curItem.from;
+      wireHoverPort=curItem.from.id?curItem.from:null;
+      curItem=null; wireDownPt=null;
+      redrawInk();
+      toast('つなぐ相手を押してください（何も無いところで取り消し）','ok');
+    } else {
+      // 引かずに離した線は残さない。相手にくっついていれば短くても意味があるので残す
+      const a=wireEnd(curItem.from,arr), b=wireEnd(curItem.to,arr);
+      const tooShort = !curItem.to.id && Math.hypot(b.x-a.x,b.y-a.y) < screenTol(10);
+      if(tooShort && arr[arr.length-1]===curItem) arr.pop();
+      curItem=null; wireHoverPort=null; wireDownPt=null; wireMoved=false;
+      redrawInk();
+    }
   }
   if(curItem){
     // discard a degenerate shape created by a mere tap with no drag (zero size, invisible)
@@ -5237,6 +5322,7 @@ function redrawInk(){
     if(bgCanvas.width!==CW||bgCanvas.height!==CH){ bgCanvas.width=CW; bgCanvas.height=CH; }
     bgCtx.clearRect(0,0,CW,CH); bgCtx.drawImage(canvas,0,0);
   }
+  renderWireHint();
   if(state.tool==='wire'){
     // 配線ツールのときだけ、全部品の接続点を薄く出す。**繋げる先が見えない**と
     // 吸着があっても当てずっぽうになる（v9.5）
@@ -5256,15 +5342,20 @@ function redrawInk(){
         }
       });
     });
-    // 記号の本体に落とそうとしているときは、その記号を枠で囲って「ここに付く」と伝える
+    /* v9.8：「いま繋がる先」は**指の外側に、太く**出す。記号の絵は画面に合わせた倍率で35px、
+       指の接触面は40〜50px＝押している本人には記号も細い破線も見えない。
+       当たり箱より外へ回し、太さも上げる。 */
     if(wireHoverPort){
       const sym=findItemById(list,wireHoverPort.id);
       if(sym){
-        const h=symbolHalf(sym);
-        ctx.setLineDash([5,4]); ctx.lineWidth=screenTol(1.5);
-        ctx.strokeStyle='rgba(59,130,246,.55)';
-        ctx.strokeRect(sym.x-h,sym.y-h,h*2,h*2);
-        ctx.setLineDash([]);
+        const h=symbolHalf(sym)+screenTol(WIRE_BODY_PAD_PX);
+        ctx.setLineDash([]); ctx.lineWidth=screenTol(3);
+        ctx.strokeStyle= wirePendFrom ? 'rgba(34,197,94,.95)' : 'rgba(59,130,246,.9)';
+        const r=screenTol(8);
+        ctx.beginPath();
+        if(ctx.roundRect) ctx.roundRect(sym.x-h,sym.y-h,h*2,h*2,r);
+        else ctx.rect(sym.x-h,sym.y-h,h*2,h*2);
+        ctx.stroke();
       }
     }
     ctx.restore();
@@ -5362,7 +5453,7 @@ function setTool(t){
   if(t!=='shape') deselectShape();
   if(t!=='select') clearMultiSel(); // 選択ツールを離れたら複数選択を解除
   if(t!=='symbol') symSelected=null; // シンボルツールを離れたら選択解除
-  if(t!=='wire') wireHoverPort=null;
+  if(t!=='wire'){ wireHoverPort=null; wirePendFrom=null; }
   // 配線に入った時点で、既存の記号へ id を振る（v9.5 より前の図面を壊さないための遅延採番）
   if(t==='wire'){ const n=ensureSymbolIds(strokes[inkKey()]); if(n) redrawInk(); }
   if(t!=='pen'){ penEraseMode=false; penErasing=false; } // ペン以外に移ったら消去モード解除
@@ -9009,7 +9100,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v9.7';
+const APP_BUILD='v9.8';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの
@@ -9440,6 +9531,16 @@ async function deletePage(){
   gotoPage(rest[Math.min(i, rest.length-1)]);
   toast('ページを削除しました','warn');
 }
+/* タップ待ちの間、画面の下に「いま何をしているか」を出す。トーストは消えてしまうため、
+   押しっぱなしの状態が見えないと、何を待たれているのか分からなくなる（v9.8）。 */
+function renderWireHint(){
+  const el=$('#wireHint'); if(!el) return;
+  const on = state.tool==='wire' && !!wirePendFrom;
+  el.classList.toggle('show', on);
+}
+$('#wireCancel').addEventListener('click',()=>{
+  wirePendFrom=null; wireHoverPort=null; renderWireHint(); redrawInk();
+});
 $('#pgPrev').addEventListener('click',()=>stepPage(-1));
 $('#pgNext').addEventListener('click',()=>stepPage(1));
 $('#pgLabel').addEventListener('click',renamePage);
@@ -10222,7 +10323,7 @@ $('#buildTag').addEventListener('click',e=>{
 });
 
 /* ===== boot ===== */
-function renderAll(){renderList();renderViewer();renderContext();updateTabs();renderPageBar();}
+function renderAll(){renderList();renderViewer();renderContext();updateTabs();renderPageBar();renderWireHint();}
 window.addEventListener('resize',fitView);
 renderAll();fitView();layoutPanels();updateCollapsedGlyphs();
 setViewLock(true,true); // 起動は必ず「見るだけ」から（前回の状態は覚えない）

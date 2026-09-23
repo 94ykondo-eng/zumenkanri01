@@ -1515,6 +1515,29 @@
        変えないため。
        [まだ無い] 符号・回路番号（手入力のみの方針）、ケーブル長（集計しない方針）、線種と
        レイヤ、整列、結線リスト・部材拾いの出力は v9.6／v9.7。
+
+  build v9.6 (図面に複数ページ＝束)  —
+       [設計] **ページ＝今までどおり1枚の図面**とし、bookId で束ねるだけにした。d.pages=[...] の
+       配列にしなかったのは影響範囲のため：strokes は `drawingId@版`、pins / ledgerPlan /
+       ver.snap はすべて drawingId がキーなので、配列化すると朱書き・ピン・台帳・版・
+       ドライブ保存スキーマ・PDF出力を全部作り替えることになる。束ねるだけなら
+       **既存のキーを1つも変えずに済む**。写真の dataURL が全域のキーになっている問題（3.1）と
+       同じ構造の地雷を新しく作らない、という判断。
+       [移行不要] `bookIdOf(d)=d.bookId||d.id` にしてあるので、**bookId を持たない既存図面は
+       「1ページだけの束」として自動的に扱われる**。ページを足した瞬間に初めて bookId が入る。
+       [版] 確定は束で一括（吉彦さんの選択）。ページごとに進むと「1階だけ v2、2階は v1」という
+       束ができて辻褄が合わない。**変更のないページも同じ版へ送る**のが要点で、据え置くと
+       結局番号が揃わない。新しく足したページも、束の編集中の版に合わせて作る（v1 で作ると
+       そのページだけ番号が遅れる）。確定ボタンの有効判定は bookDirty()＝束のどれかが変われば押せる。
+       [一覧] 束ごとに1行。行の中にページのチップを並べ、チップでページを開く（吉彦さんの選択）。
+       行の削除は**束ごと**（ページ数を確認文に出す）。1ページだけ消すのはページバーの削除。
+       [後始末] ページ削除と図面削除で同じ掃除が要るので purgeDrawingData() に切り出した。
+       片方だけ直して、もう片方に消し残りが出る事故を防ぐため。
+       [ページ追加] いまのページが白紙なら**用紙・方眼をそのまま引き継ぐ**（sheetSrc は同じ方眼画像
+       なので使い回してよい。作り直すとデータが増えるだけ）。取り込み図面なら A3横の白紙を新しく作る。
+       [まだ無い] 写真台帳は**まだページごと**。束で1冊にまとめるのは v9.7（renderLedger /
+       ledgerCells / PDF / Excel が dwgId 単位なので、横断させるのはこれ自体が一仕事）。
+       ページの並べ替え、PDFの全ページ一括出力、PDF取り込みでページを足す、も未実装。
 -->
 <html lang="ja">
 <head>
@@ -2227,6 +2250,28 @@
   }
 
   /* ===== measure tool ===== */
+  /* ページバー（v9.6）。計測バーが中央なので、こちらは左上に置いて重ならないようにする */
+  .page-bar{position:absolute;top:14px;left:14px;display:none;align-items:center;gap:4px;z-index:36;
+    background:rgba(22,28,37,.94);backdrop-filter:blur(10px);
+    border:1px solid var(--line2);border-radius:12px;padding:5px 6px;
+    box-shadow:0 6px 22px rgba(0,0,0,.4);font-size:12.5px;color:var(--ink)}
+  .page-bar.show{display:flex}
+  .page-bar button{background:transparent;border:none;color:var(--ink);border-radius:8px;
+    height:36px;min-width:36px;padding:0 8px;font-size:12.5px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;gap:5px}
+  .page-bar button svg{width:16px;height:16px;pointer-events:none}
+  .page-bar button:disabled{opacity:.3}
+  .page-bar .pg-label{min-width:104px;max-width:190px;font-weight:800;
+    background:rgba(255,255,255,.06);border:1px solid var(--line2);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;line-height:34px;text-align:center}
+  .page-bar .pg-sep{width:1px;height:22px;background:var(--line2);margin:0 3px}
+  .page-bar .pg-del{color:#F0656A}
+  /* 一覧のページチップ（v9.6） */
+  .pg-chips{display:flex;flex-wrap:wrap;gap:5px;margin:7px 0 2px}
+  .pg-chip{background:rgba(255,255,255,.05);border:1px solid var(--line2);color:var(--sub);
+    border-radius:7px;height:26px;padding:0 9px;font-size:11.5px;font-weight:700;
+    max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pg-chip.on{background:rgba(59,130,246,.18);border-color:rgba(59,130,246,.55);color:var(--ink)}
   .measure-bar{position:absolute;top:14px;left:50%;transform:translateX(-50%);
     display:none;align-items:center;gap:10px;z-index:36;
     background:rgba(22,28,37,.94);backdrop-filter:blur(10px);
@@ -2705,7 +2750,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="配線図面の基盤：部品につながる線（追従・直交）">build v9.5</button>
+          data-desc="図面に複数ページ（束）／束で一括確定">build v9.6</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2738,6 +2783,16 @@
 
   <!-- pins float in viewport space (constant screen size, anchored to drawing coords) -->
   <div class="pin-layer" id="pinLayer"></div>
+
+  <!-- ページバー（v9.6）：図面を開いている間だけ出す。1ページでも出すのは「＋」を見つけてもらうため -->
+  <div class="page-bar" id="pageBar">
+    <button id="pgPrev" title="前のページ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <button class="pg-label" id="pgLabel" title="ページ名を変える">ページ 1/1</button>
+    <button id="pgNext" title="次のページ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+    <div class="pg-sep"></div>
+    <button id="pgAdd" title="ページを追加"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>ページ</button>
+    <button class="pg-del" id="pgDel" title="このページを削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg></button>
+  </div>
 
   <div class="tool-panel" id="shapePanel" data-key="shape" data-pos="center">
     <div class="tp-row shape-row" id="shapeRow">
@@ -3876,6 +3931,26 @@ const isWorkVer=v=>!!v&&v.status==='work';
 const verLabel=v=>'v'+String(v).replace(/\.0$/,'');
 const verNum=v=>parseFloat(v)||0;
 function nextVerNum(d){ return String(Math.floor(Math.max(0,...d.versions.map(x=>verNum(x.v))))+1); }
+/* ===== ページ（束）v9.6 =====
+   「図面に複数ページ」を、**ページ＝今までどおり1枚の図面**として実現し、
+   bookId で束ねるだけにしてある。d.pages=[...] の配列にしなかったのは影響範囲のため：
+   strokes は `drawingId@版`、pins / ledgerPlan / ver.snap はすべて drawingId がキーなので、
+   配列にすると朱書き・ピン・台帳・版・ドライブ保存スキーマ・PDF出力を**全部作り替える**ことになる。
+   束ねるだけなら既存のキーを1つも変えずに済む。
+
+   **bookId を持たない図面は「1ページだけの束」として扱う**ので、既存データの移行は不要。
+   ページを足した瞬間に、はじめて bookId が書き込まれる。 */
+function bookIdOf(d){ return d ? (d.bookId||d.id) : ''; }
+function bookPages(d){
+  if(!d) return [];
+  const b=bookIdOf(d);
+  return drawings.filter(x=>bookIdOf(x)===b).sort((p,q)=>(p.pageNo||1)-(q.pageNo||1));
+}
+function bookHead(d){ return bookPages(d)[0]||d; }
+function pageLabelOf(d){ return (d&&d.pageName) ? d.pageName : ('ページ'+((d&&d.pageNo)||1)); }
+function pageIndexOf(d){ const ps=bookPages(d); return Math.max(0, ps.findIndex(x=>x.id===(d&&d.id))); }
+// ページを消したり入れ替えたりしたあとに 1..n へ振り直す（欠番は並び順の事故のもと）
+function renumberBook(d){ bookPages(d).forEach((p,i)=>{ p.pageNo=i+1; }); }
 /* 旧データ（published/draft/superseded）を新モデルへ寄せる。
    末尾を編集中、それ以外を確定済みとみなす。版番号は変えない（strokes のキーが id@版 のため）。 */
 function migrateVersions(){
@@ -4510,7 +4585,7 @@ let panLock=false; // 作図ツール中は1本指で画面を動かさない（
 let lastPenTs=0; const PEN_GRACE=450; // 直近にペンシルを使った時刻。ペン中＋直後の一瞬だけ指を無視し、以降は指で描ける
 function penDown(){ for(const p of pointers.values()) if(p.type==='pen') return true; return false; }
 vp.addEventListener('pointerdown',e=>{
-  if(e.target.closest('.dock,.hint-chip,.tool-panel,.pin,.measure-bar,.symbol-panel'))return;
+  if(e.target.closest('.dock,.hint-chip,.tool-panel,.pin,.measure-bar,.symbol-panel,.page-bar'))return;
   // ① パームリジェクション：Apple Pencil が触れている間は指タッチを一切拾わない（手のひら・指の誤描画/誤移動を防止）
   if(e.pointerType==='touch' && penDown()) return;
   if(e.pointerType==='pen'){
@@ -8793,7 +8868,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v9.5';
+const APP_BUILD='v9.6';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの
@@ -9066,7 +9141,9 @@ function renderList(){
     </div>`;
     return;
   }
-  const groups={};drawings.forEach(d=>{(groups[d.group]=groups[d.group]||[]).push(d);});
+  // v9.6：一覧は**束ごとに1行**。束の代表（1ページ目）だけを並べ、ページはその行の中のチップで開く
+  const heads=drawings.filter(d=>bookPages(d)[0]===d);
+  const groups={};heads.forEach(d=>{(groups[d.group]=groups[d.group]||[]).push(d);});
   let html='';
   for(const g in groups){
     html+=`<div class="group-label">${g}</div>`;
@@ -9076,7 +9153,9 @@ function renderList(){
       const pr=ledgerProgress(d.id);
       const badgeTxt=pr.total?`${pr.done}/${pr.total}`:'0';
       const badgeCls=pr.total?(pr.short?'short':'has'):'';
-      html+=`<div class="dwg ${d.id===state.selectedId?'active':''} ${locked?'locked':''}" data-id="${d.id}">
+      const pages=bookPages(d);
+      const onThis=pages.some(p=>p.id===state.selectedId);
+      html+=`<div class="dwg ${onThis?'active':''} ${locked?'locked':''}" data-id="${d.id}">
         ${showNew?'<span class="badge-new">NEW</span>':''}
         <div class="title-row">
           <div class="title">${escHtml(d.name)}</div>
@@ -9085,10 +9164,14 @@ function renderList(){
         </div>
         <div class="r2">
           <span class="ver-tag pub">${pub?verLabel(pub.v):'—'} 編集中</span>
+          ${pages.length>1?`<span class="imported-chip">${pages.length}ページ</span>`:''}
           ${d.blank?'<span class="imported-chip">白紙</span>':d.imported?'<span class="imported-chip">取り込み</span>':''}
           ${d.cached?`<span class="chip cache-on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>保存済</span>`
             :`<span class="chip">${locked?'未保存':'クラウド'}</span>`}
         </div>
+        ${pages.length>1?`<div class="pg-chips">${pages.map(p=>
+            `<button class="pg-chip ${p.id===state.selectedId?'on':''}" data-page="${p.id}">${escHtml(pageLabelOf(p))}</button>`
+          ).join('')}</div>`:''}
         <button class="ledger-btn" data-ledger="${d.id}" title="写真台帳を開く">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z"/><path d="M4 9h16"/><circle cx="8" cy="14" r="1.6"/><path d="M11 15l2-2 3 3"/></svg>
           写真台帳<span class="cnt ${badgeCls}">${badgeTxt}</span>
@@ -9099,8 +9182,17 @@ function renderList(){
   $('#dwgList').querySelectorAll('.dwg').forEach(el=>el.addEventListener('click',()=>{
     const d=drawings.find(x=>x.id===el.dataset.id);
     if(!state.online&&!d.cached){toast('オフライン：この図面は保存されていません','warn');return;}
-    state.selectedId=el.dataset.id;state.viewingVer=null;d.seenNew=false;setTool('nav');
+    // 束の行を押したら、いま見ているページがその束の中ならそのまま、違えば1ページ目を開く
+    const ps=bookPages(d);
+    const target=ps.find(p=>p.id===state.selectedId)||ps[0]||d;
+    state.selectedId=target.id;state.viewingVer=null;target.seenNew=false;setTool('nav');
     closeDrawers();renderAll();fitView();
+  }));
+  // ページのチップ（行クリックとは分離。§6の教訓）
+  $('#dwgList').querySelectorAll('.pg-chip').forEach(btn=>btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const p=drawings.find(x=>x.id===btn.dataset.page);
+    if(p){ closeDrawers(); gotoPage(p); }
   }));
   // 台帳ボタンは行クリックと分離（§6の教訓：タップ競合を stopPropagation で回避）
   $('#dwgList').querySelectorAll('.ledger-btn').forEach(btn=>btn.addEventListener('click',e=>{
@@ -9118,31 +9210,131 @@ function renderList(){
     deleteDrawing(btn.dataset.del);
   }));
 }
-// 図面の削除：確認のうえ、本体と紐づくデータ（ピン・朱書き/図形/計測・撮影計画・台帳メタ・写真注釈）を掃除
-async function deleteDrawing(id){
-  const d=drawings.find(x=>x.id===id); if(!d) return;
-  const nPins=(pins[id]||[]).length;
-  const ok=await gConfirm({
-    title:'図面を削除しますか？',
-    desc:`「${escHtml(d.name)}」を削除します。${nPins?`ピン${nPins}件・`:''}この図面の朱書き/図形/計測・写真台帳・撮影計画もすべて削除されます。<br>この操作は元に戻せません。`,
-    ok:'削除', danger:true
+/* ===== ページバー（v9.6） ===== */
+function renderPageBar(){
+  const bar=$('#pageBar'); if(!bar) return;
+  const d=dwg();
+  bar.classList.toggle('show', !!d);
+  if(!d) return;
+  const ps=bookPages(d), i=pageIndexOf(d);
+  $('#pgLabel').textContent = ps.length>1
+    ? `${pageLabelOf(d)}（${i+1}/${ps.length}）`
+    : pageLabelOf(d);
+  $('#pgPrev').disabled = i<=0;
+  $('#pgNext').disabled = i>=ps.length-1;
+  // 1ページだけの束は、削除＝図面ごと消すことになるので、ここからは消させない（一覧の削除を使う）
+  $('#pgDel').disabled = ps.length<2;
+}
+function gotoPage(d){
+  if(!d) return;
+  if(!state.online && !d.cached){ toast('オフライン：このページは保存されていません','warn'); return; }
+  state.selectedId=d.id; state.viewingVer=null; d.seenNew=false;
+  setTool('nav'); clearMultiSel(); deselectShape();
+  renderAll(); fitView();
+}
+function stepPage(dir){
+  const d=dwg(); if(!d) return;
+  const ps=bookPages(d), i=pageIndexOf(d)+dir;
+  if(i<0||i>=ps.length) return;
+  gotoPage(ps[i]);
+}
+/* ページを足す。**いまのページが白紙ならその用紙・方眼をそのまま引き継ぐ**
+   （sheetSrc は同じ方眼画像なので使い回してよい。作り直すとデータが増えるだけ）。
+   取り込み図面の場合は元画像を複製しても意味がないので、A3横の白紙を新しく作る。 */
+async function addBookPage(){
+  const d=dwg(); if(!d){ toast('先に図面を開いてください','warn'); return; }
+  const r=editBlockReason(); if(r){ toast(r,'warn'); return; }
+  await withBusy('ページを追加中…', async()=>{
+    const bid=bookIdOf(d);
+    // はじめてページを足すとき、その図面を「束」に昇格させる（ここで初めて bookId が書き込まれる）
+    bookPages(d).forEach((p,i)=>{ p.bookId=bid; if(!p.pageNo) p.pageNo=i+1; });
+    const ps=bookPages(d);
+    const id='u'+(++dwgSeq);
+    let sheetSrc=d.sheetSrc, sheetW=d.sheetW, sheetH=d.sheetH, gridMM=d.gridMM, gridUnit=d.gridUnit;
+    if(!d.blank){
+      const b=generateBlankSheet('A3','land',BLANK_GRID_DEFAULT_MM);
+      const u=sheetUnits(b.w,b.h), gmm=blankDimsMM('A3','land');
+      sheetSrc=b.src; sheetW=u.w; sheetH=u.h; gridMM=b.gridMM; gridUnit=u.w*b.gridMM/gmm.w;
+    }
+    /* 版番号は**束の編集中の版に合わせる**。合わせないと、あとから足したページだけ v1 のままになり、
+       束での一括確定（下の fixVersion）が版番号の揃わない束を作ってしまう。 */
+    const hv=workVer(bookHead(d));
+    const v=hv? hv.v : '1';
+    drawings.push({
+      id, bookId:bid, pageNo:ps.length+1, pageName:'ページ'+(ps.length+1),
+      name:d.name, group:d.group, floor:d.floor, cached:true, seenNew:false, blank:true,
+      gridMM, gridUnit, mmPerUnit:d.mmPerUnit||DEFAULT_MM_PER_UNIT,
+      sheetSrc, sheetW, sheetH,
+      versions:[{v, status:'work', date:todayStr().replace(/-/g,'/'), note:'', diff:{tag:'REV.1.0'}}],
+    });
+    pins[id]=[];
+    gotoPage(drawings[drawings.length-1]);
+    toast(`ページ${ps.length+1} を追加しました`,'ok');
   });
+}
+async function renamePage(){
+  const d=dwg(); if(!d) return;
+  const r=editBlockReason(); if(r){ toast(r,'warn'); return; }
+  const v=await gPrompt({ title:'ページ名を変える',
+    desc:`「${escHtml(d.name)}」の ${escHtml(pageLabelOf(d))} の名前を変えます。<br>例）1階 電灯／2階 コンセント／系統図`,
+    placeholder:pageLabelOf(d), ok:'変更' });
+  if(v===null) return;
+  d.pageName=(v||'').trim()||('ページ'+(d.pageNo||1));
+  renderAll();
+}
+async function deletePage(){
+  const d=dwg(); if(!d) return;
+  const r=editBlockReason(); if(r){ toast(r,'warn'); return; }
+  const ps=bookPages(d);
+  if(ps.length<2){ toast('最後の1ページは削除できません（図面ごと消すには一覧の削除を使ってください）','warn'); return; }
+  const nPins=(pins[d.id]||[]).length;
+  const ok=await gConfirm({ title:'このページを削除しますか？',
+    desc:`「${escHtml(d.name)}」の ${escHtml(pageLabelOf(d))} を削除します。`
+        +`${nPins?`ピン${nPins}件・`:''}このページの朱書き/図形/計測・撮影計画も消えます。<br>この操作は元に戻せません。`,
+    ok:'削除', danger:true });
   if(!ok) return;
-  // src単位で持っているメタ（台帳メタ・写真注釈）も掃除するため、まず対象srcを集める
+  const i=pageIndexOf(d), rest=ps.filter(p=>p.id!==d.id);
+  purgeDrawingData(d.id);
+  renumberBook(rest[0]);
+  gotoPage(rest[Math.min(i, rest.length-1)]);
+  toast('ページを削除しました','warn');
+}
+$('#pgPrev').addEventListener('click',()=>stepPage(-1));
+$('#pgNext').addEventListener('click',()=>stepPage(1));
+$('#pgLabel').addEventListener('click',renamePage);
+$('#pgAdd').addEventListener('click',addBookPage);
+$('#pgDel').addEventListener('click',deletePage);
+
+/* 図面ID単位のデータをまとめて捨てる。ページ削除と図面削除で同じ後始末が要るので切り出した
+   （片方だけ直して、もう片方に消し残りが出るのを防ぐ）。 */
+function purgeDrawingData(id){
   const srcs=new Set();
   (pins[id]||[]).forEach(p=>(p.photos||[]).forEach(s=>srcs.add(s)));
   Object.values(ledgerPlan[id]||{}).forEach(arr=>(arr||[]).forEach(sl=>{ if(sl && sl.src) srcs.add(sl.src); }));
   srcs.forEach(s=>{ delete ledgerPhotoMeta[s]; delete photoInk[s]; delete photoInkRedo[s]; });
-  // 図面ID単位のストア
   delete pins[id]; delete ledgerPlan[id]; delete ledgerPinMeta[id];
-  // 「id@バージョン」キーの朱書き・アンドゥ履歴
   [strokes,inkHist,inkRedo,redoStrokes].forEach(store=>{
     Object.keys(store).forEach(k=>{ if(k.indexOf(id+'@')===0) delete store[k]; });
   });
-  // 本体を配列から除去
   const idx=drawings.findIndex(x=>x.id===id); if(idx>-1) drawings.splice(idx,1);
-  // 選択中を消した場合の後始末
   if(state.selectedId===id){ state.selectedId=null; state.viewingVer=null; deselectShape(); state.tool='nav'; }
+}
+// 図面の削除：確認のうえ、本体と紐づくデータ（ピン・朱書き/図形/計測・撮影計画・台帳メタ・写真注釈）を掃除
+async function deleteDrawing(id){
+  const d=drawings.find(x=>x.id===id); if(!d) return;
+  // v9.6：一覧の削除は**束ごと**（一覧は束を1行で出しているので、行の削除＝束の削除が素直）。
+  // 1ページだけ消したいときはページバーの削除を使う。
+  const pages=bookPages(d);
+  const nPins=pages.reduce((n,p)=>n+(pins[p.id]||[]).length,0);
+  const ok=await gConfirm({
+    title: pages.length>1 ? `図面（${pages.length}ページ）を削除しますか？` : '図面を削除しますか？',
+    desc:`「${escHtml(d.name)}」を削除します。`
+        +`${pages.length>1?`<b>${pages.length}ページすべて</b>が対象です。`:''}`
+        +`${nPins?`ピン${nPins}件・`:''}朱書き/図形/計測・写真台帳・撮影計画もすべて削除されます。<br>この操作は元に戻せません。`,
+    ok:'削除', danger:true
+  });
+  if(!ok) return;
+  pages.forEach(p=>purgeDrawingData(p.id));  // 後始末は purgeDrawingData に集約（v9.6）
   toast(`「${d.name}」を削除しました`,'warn');
   renderAll(); fitView();
 }
@@ -9255,10 +9447,10 @@ function renderContext(){
     vh=`<div class="approve-box neutral"><h4>この図面の版</h4>
         <p>いまは <b>${verLabel(wv.v)}</b> を編集中です。区切りがついたら確定すると、その時点の朱書き・ピン・写真が記録として残り、
         続きは <b>${verLabel(nextVerNum(d))}</b> になります。確定後も編集は続けられます。</p>
-        <button class="btn-primary" id="btnFixVer" ${verDirty(d)?'':'disabled'}>
+        <button class="btn-primary" id="btnFixVer" ${bookDirty(d)?'':'disabled'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
           ${verLabel(wv.v)} として確定</button>
-        <p class="p-note" style="margin-top:8px">${verDirty(d)?'確定と同時にGoogleドライブへ保存します。':'前回の確定から変更がありません。'}</p>
+        <p class="p-note" style="margin-top:8px">${bookDirty(d)?(bookPages(d).length>1?`確定すると${bookPages(d).length}ページすべてが次の版へ進みます。同時にGoogleドライブへ保存します。`:'確定と同時にGoogleドライブへ保存します。'):'前回の確定から変更がありません。'}</p>
         </div>`+vh;
     $('#paneVer').innerHTML=vh;
   }else{
@@ -9332,14 +9524,23 @@ function verDirty(d){
   if(wv.baseSig===undefined) return true;      // まだ一度も確定していない
   return verSignature(d)!==wv.baseSig;
 }
+// 確定ボタンの有効・無効は束で見る（他のページだけが変わっていても押せるようにする・v9.6）
+function bookDirty(d){ return bookPages(d).some(p=>verDirty(p)); }
+/* v9.6：確定は**束で一括**（吉彦さんの選択）。ページごとに別々に進むと
+   「1階だけ v2、2階は v1」という束ができ、図面として辻褄が合わなくなる。
+   変更のあったページだけでなく**全ページを同じ版へ送る**のが要点で、
+   変更のないページを据え置くと結局版番号が揃わない。 */
 async function fixVersion(){
   const d=dwg(); if(!d){ toast('先に図面を開いてください','warn'); return; }
   const wv=workVer(d); if(!wv) return;
-  if(!verDirty(d)){ toast('前回の確定から変更がありません','warn'); return; }
+  const pages=bookPages(d);
+  if(!pages.some(p=>verDirty(p))){ toast('前回の確定から変更がありません','warn'); return; }
   const nv=nextVerNum(d);
+  const nDirty=pages.filter(p=>verDirty(p)).length;
   const note=await gPrompt({
     title:`${verLabel(wv.v)} として確定しますか？`,
     desc:`この時点の朱書き・ピン・写真を ${verLabel(wv.v)} の記録として残します。<br>`
+        +(pages.length>1?`<b>${pages.length}ページすべて</b>が ${verLabel(nv)} へ進みます（変更があるのは${nDirty}ページ）。<br>`:'')
         +`この後も編集を続けられます（続きは ${verLabel(nv)} になります）。<br>確定と同時にGoogleドライブへ保存します。`,
     placeholder:'メモ（任意）：例）室内機まわり確定',
     ok:'確定して保存'
@@ -9347,17 +9548,20 @@ async function fixVersion(){
   if(note===null) return; // キャンセル
   await withBusy(`${verLabel(wv.v)} を確定中…`, async()=>{
     busyProgress('この時点の内容を記録中'); await nextPaint();
-    // ① いまの版を記録として固める（ピン・撮影計画はこの版に凍結。朱書きは strokes[id@版] にそのまま残る）
-    wv.status='fixed';
-    wv.date=todayStr().replace(/-/g,'/');
-    wv.note=(note||'').trim()||'（メモなし）';
-    wv.snap={ pins:cloneShared(pins[d.id]||[]), plan:cloneShared(ledgerPlan[d.id]||{}) };
-    // ② 中身を引き継いだ次の版を作り、そこを編集中にする
-    const next={v:nv, status:'work', date:todayStr().replace(/-/g,'/'), note:'', diff:wv.diff};
-    d.versions.push(next);
-    strokes[d.id+'@'+nv]=cloneShared(strokes[d.id+'@'+wv.v]||[]);
-    redoStrokes[d.id+'@'+nv]=[];
-    next.baseSig=verSignature(d);   // この時点＝確定直後を基準にする
+    pages.forEach(p=>{
+      const pv=workVer(p); if(!pv) return;
+      // ① いまの版を記録として固める（ピン・撮影計画はこの版に凍結。朱書きは strokes[id@版] にそのまま残る）
+      pv.status='fixed';
+      pv.date=todayStr().replace(/-/g,'/');
+      pv.note=(note||'').trim()||'（メモなし）';
+      pv.snap={ pins:cloneShared(pins[p.id]||[]), plan:cloneShared(ledgerPlan[p.id]||{}) };
+      // ② 中身を引き継いだ次の版を作り、そこを編集中にする
+      const next={v:nv, status:'work', date:todayStr().replace(/-/g,'/'), note:'', diff:pv.diff};
+      p.versions.push(next);
+      strokes[p.id+'@'+nv]=cloneShared(strokes[p.id+'@'+pv.v]||[]);
+      redoStrokes[p.id+'@'+nv]=[];
+      next.baseSig=verSignature(p);   // この時点＝確定直後を基準にする
+    });
     state.viewingVer=null;          // 常に編集中の版へ戻す
     clearMultiSel(); deselectShape();
     renderAll();
@@ -9365,7 +9569,9 @@ async function fixVersion(){
     busySetLabel('Googleドライブへ保存中…'); busyProgress(''); await nextPaint();
     try{ await saveToGas({silent:true}); }
     catch(e){ toast('確定しました。ただし'+(e&&e.userMessage||'Googleドライブへの保存に失敗しました（設定・通信環境をご確認ください）'),'warn'); return; }
-    toast(`${verLabel(wv.v)} として確定し、Googleドライブへ保存しました`,'ok');
+    toast(pages.length>1
+      ? `${verLabel(wv.v)} として${pages.length}ページを確定し、Googleドライブへ保存しました`
+      : `${verLabel(wv.v)} として確定し、Googleドライブへ保存しました`,'ok');
   });
 }
 
@@ -9875,7 +10081,7 @@ $('#buildTag').addEventListener('click',e=>{
 });
 
 /* ===== boot ===== */
-function renderAll(){renderList();renderViewer();renderContext();updateTabs();}
+function renderAll(){renderList();renderViewer();renderContext();updateTabs();renderPageBar();}
 window.addEventListener('resize',fitView);
 renderAll();fitView();layoutPanels();updateCollapsedGlyphs();
 setViewLock(true,true); // 起動は必ず「見るだけ」から（前回の状態は覚えない）

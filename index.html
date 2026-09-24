@@ -1606,6 +1606,52 @@
        （直径40〜50px）と記号の両方を避けないと「見えないものを狙う」元の問題に戻る。
        手順：記号を押す→場所を選ぶ→相手の記号を押す→場所を選ぶ。ドラッグも残してある。
        [取り消し] 何も無いところを押す／「やめる」。案内の文言は待っている内容で変える。
+
+  build v9.10 (図形にも配線を繋げる)  —
+       [ねらい] 盤や機器を四角で描き、文字で名前を入れる、という描き方が配線図では普通。
+       そこへ線を繋げられないと図面にならない。繋げる対象を記号から
+       CONNECT_TYPES（記号・四角・円・文字）へ広げた。
+       [共通化] connBox(it) が「本体の箱」を一本化して返す。記号は従来どおり size×0.7、
+       図形は外接矩形。接続点はこの箱の4辺の中点＋わずかな余白。図形は輪郭そのものが絵なので、
+       記号で問題になった「絵と当たり箱が2倍ずれる」（v9.7）は起きない。
+       [基準が中心に変わった] 記号は it.x,it.y が中心だが、図形は x1,y1,x2,y2 なので中心が別。
+       symbolPortPt / pickPort / portBtnPt / 囲みの枠を**すべて connBox の中心基準**に直した。
+       片方でも取り残すと、図形だけ接続点が画面の左上へ飛ぶ。
+       [小さいものを優先] hitSymbolBody は、候補が複数あるとき**いちばん小さいもの**を選ぶ。
+       盤を大きな四角で描いてその中に記号を並べる描き方があり、「近いほう」で選ぶと
+       中の記号ではなく外の枠を掴んでしまう。
+       [ボタンの押し出し] 図形は縦横が違うので、その辺の端から押し出す（横長の枠でも
+       上下のボタンが近くなりすぎない）。
+       [含めないもの] 線（wire）＝線から線への分岐は端点に「線上の位置」を持たせる別の話。
+       自由線・連続線・矢印・直線＝外接矩形の4辺の中点が絵と合わない。
+
+  build v9.11 (配線図ページを新設し、配線はそこ専用に)  —
+       [ねらい] 図面に朱書きするページと、部品を並べて線で繋ぐページは、やることが別。
+       ふつうのページに配線ボタンが出ていると、朱書きのつもりで押して混乱する。
+       ページバーの「＋配線図」で作ったページ（d.wiring）でだけ配線が使えるようにし、
+       それ以外のページからは配線ボタンを**消した**。
+       [判定は1か所] isWiringPage() に集約。画面（ボタンの表示）・ツール（setTool）・
+       一覧（チップの印）の3か所で見るため、条件を散らすと「ボタンは出ないのに線が引ける」
+       という食い違いが出る。
+       [消すだけでは足りない] syncWireTool() は、表示を消すのに加えて**配線ツール中なら
+       移動ツールへ戻す**。消すだけだと、配線ツールのままふつうのページへ移って線が引けてしまう。
+       setTool と ボタンの click にも同じ判定を入れ、入口を塞いである。
+       [白紙] 配線図ページは必ず A3横の白紙を作り直す。取り込み図面の上に部品を並べることは無く、
+       いまのページが白紙でも配線図は方眼で始めたほうが揃う。
+       [見分け] ページバーと一覧のチップに ⚡ を付け、チップの色を変えた。
+       既定のページ名は「配線図N」。
+       [既にある線] ふつうのページに v9.10 までで引いた線は**データとしても表示としても残す**。
+       消すと戻せないため。引き直せなくなるだけで、図面が壊れることはない。
+
+  build v9.12 (以前の配線を拾う／既存ページを配線図に変える)  —
+       [穴① 既存の線に触れなくなる] v9.11 の isWiringPage は d.wiring だけを見ていたため、
+       **v9.10 までに引いた線があるページは配線図と見なされず、自分で引いた線に触れなくなる**。
+       表示は残るが引き直せない。pageHasWire() を足し、**印が無くても配線が1本でもあれば
+       配線図として扱う**ようにした。起動時に全図面へ印を書き込む移行はしない
+       （触っていない図面の保存データを変えないため。v9.6 の bookIdOf と同じ考え方）。
+       [穴② 既存ページを配線図にできない] v9.11 は新しく作ることしかできず、既に描いてある
+       図面に配線を足す道がなかった。ページバーに「⚡ 配線図に」を足した。
+       配線図でないページにだけ出す。描いてある内容は消さず、印を立てるだけ。
 -->
 <html lang="ja">
 <head>
@@ -2348,6 +2394,8 @@
     border-radius:7px;height:26px;padding:0 9px;font-size:11.5px;font-weight:700;
     max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pg-chip.on{background:rgba(59,130,246,.18);border-color:rgba(59,130,246,.55);color:var(--ink)}
+  .pg-chip.wire{border-color:rgba(234,179,8,.5)}
+  .pg-chip.wire.on{background:rgba(234,179,8,.18);border-color:rgba(234,179,8,.6)}
   .measure-bar{position:absolute;top:14px;left:50%;transform:translateX(-50%);
     display:none;align-items:center;gap:10px;z-index:36;
     background:rgba(22,28,37,.94);backdrop-filter:blur(10px);
@@ -2826,7 +2874,7 @@
   </div>
 
   <button class="build-tag" id="buildTag" title="機能ビルド番号（タップで内容を表示）"
-          data-desc="配線：離した位置で確定する不具合を修正／つなぐ場所を先に選ぶ">build v9.9</button>
+          data-desc="以前の配線を拾う／既存ページを配線図に変える">build v9.12</button>
   <button class="icon-btn save-warn-btn" id="btnSaveWarn" style="display:none" title="端末への自動保存に失敗しています">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -2872,7 +2920,9 @@
     <button class="pg-label" id="pgLabel" title="ページ名を変える">ページ 1/1</button>
     <button id="pgNext" title="次のページ"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
     <div class="pg-sep"></div>
-    <button id="pgAdd" title="ページを追加"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>ページ</button>
+    <button id="pgAdd" title="白紙のページを追加"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>ページ</button>
+    <button id="pgToWire" title="このページを配線図にする">⚡ 配線図に</button>
+    <button id="pgAddWire" title="配線図ページを追加（このページでだけ配線が使えます）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M5 7.2V14a2 2 0 002 2h9.8"/></svg>配線図</button>
     <button class="pg-del" id="pgDel" title="このページを削除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg></button>
   </div>
 
@@ -4029,7 +4079,26 @@ function bookPages(d){
   return drawings.filter(x=>bookIdOf(x)===b).sort((p,q)=>(p.pageNo||1)-(q.pageNo||1));
 }
 function bookHead(d){ return bookPages(d)[0]||d; }
-function pageLabelOf(d){ return (d&&d.pageName) ? d.pageName : ('ページ'+((d&&d.pageNo)||1)); }
+/* 配線図ページ（v9.11）。`d.wiring` が立っているページだけで配線が使える。
+   図面に朱書きするページと、部品を並べて線で繋ぐページは、やることが別なので道具も分ける。
+   ふつうのページに配線ボタンが出ていると、朱書きのつもりで押して混乱する。
+   **判定は1か所（isWiringPage）に集約する。** 画面・ツール・一覧の3か所で見るため、
+   条件を散らすと「ボタンは出ないのに線が引ける」といった食い違いが出る。 */
+/* v9.12：印が無くても**既に配線が引いてあるページは配線図として扱う**。
+   v9.11 より前に引いた線は d.wiring を持たないため、そのままだと配線ボタンが出ず
+   自分で引いた線に触れなくなる。起動時に全図面へ印を書き込む移行はしない
+   （触っていない図面の保存データを変えないため。v9.6 の bookIdOf と同じ考え方）。 */
+function pageHasWire(d){
+  if(!d) return false;
+  const wv=workVer(d);
+  if(!wv) return false;
+  return (strokes[d.id+'@'+wv.v]||[]).some(i=>i.type==='wire');
+}
+function isWiringPage(d){ return !!(d && (d.wiring || pageHasWire(d))); }
+function pageLabelOf(d){
+  if(d&&d.pageName) return d.pageName;
+  return (isWiringPage(d)?'配線図':'ページ')+((d&&d.pageNo)||1);
+}
 function pageIndexOf(d){ const ps=bookPages(d); return Math.max(0, ps.findIndex(x=>x.id===(d&&d.id))); }
 // ページを消したり入れ替えたりしたあとに 1..n へ振り直す（欠番は並び順の事故のもと）
 function renumberBook(d){ bookPages(d).forEach((p,i)=>{ p.pageNo=i+1; }); }
@@ -4159,6 +4228,21 @@ let penErasing=false;     // なぞり消去ドラッグ中
    浮いたまま引いた線をあとから部品にくっつける、という育て方ができる。
    id を持つ側も x,y を**控えとして持ち続ける**のが要点で、これで部品を消しても
    線が原点へ飛ばずその場に残る（消したときの後始末の経路を作らなくて済む）。 */
+/* 繋げるものの種類（v9.10）。記号だけでなく四角・円・文字にも接続点を持たせる。
+   盤や機器を四角で描き、文字で名前を入れる、という描き方が配線図では普通なので、
+   そこへ線を繋げられないと図面にならない。
+   **線（wire）は含めない**（線から線への分岐は端点に「線上の位置」を持たせる別の話）。
+   自由線・連続線・矢印・直線も含めない（外接矩形の4辺の中点が絵と合わないため）。 */
+const CONNECT_TYPES=['symbol','rect','ellipse','text'];
+function isConnectable(it){ return !!it && CONNECT_TYPES.indexOf(it.type)>=0; }
+/* 繋げるものの「本体の箱」。記号は従来どおり size×0.7、図形は外接矩形。
+   選択・移動の当たり判定とは別に、配線が使う共通の形としてここで一本化する。 */
+function connBox(it){
+  if(it.type==='symbol'){ const h=symbolHalf(it); return {cx:it.x, cy:it.y, hx:h, hy:h}; }
+  const b=shapeBounds(it);
+  return {cx:(b.x0+b.x1)/2, cy:(b.y0+b.y1)/2,
+          hx:Math.max((b.x1-b.x0)/2, 1), hy:Math.max((b.y1-b.y0)/2, 1)};
+}
 const WIRE_PORTS=['t','r','b','l'];   // 既定は4方向（上・右・下・左）
 const SYM_PORTS={};                   // kind → 接続点の配列。記号ごとに増やしたくなったらここへ
 function symbolPortsOf(kind){ return SYM_PORTS[kind]||WIRE_PORTS; }
@@ -4198,19 +4282,25 @@ function symbolExtent(kind){
   SYM_EXTENT[kind]=r;
   return r;
 }
-// 中心から接続点までの距離（縦横で別。蛍光灯のような横長に効く）
+/* 中心から接続点までの距離（縦横で別。蛍光灯のような横長に効く）。
+   記号は絵の実測＋余白、図形は外接矩形＋わずかな余白（v9.10）。
+   図形は輪郭そのものが絵なので、記号のような「絵と当たり箱のずれ」は起きない。 */
 function symbolPortHalf(it){
+  if(it.type!=='symbol'){
+    const b=connBox(it), g=screenTol(5);
+    return {hx:b.hx+g, hy:b.hy+g};
+  }
   const e=symbolExtent(it.kind), s=(it.size||44);
   return {hx:(e.hx+PORT_GAP)*s, hy:(e.hy+PORT_GAP)*s};
 }
 /* 接続点は**回転させない**（キャンバス座標で常に上下左右）。直交配線は軸に沿うのが前提で、
    記号を45°回しても線は縦横で入ってくるほうが図面として読みやすいため。 */
 function symbolPortPt(it,port){
-  const h=symbolPortHalf(it);
-  if(port==='t') return {x:it.x, y:it.y-h.hy};
-  if(port==='b') return {x:it.x, y:it.y+h.hy};
-  if(port==='l') return {x:it.x-h.hx, y:it.y};
-  return {x:it.x+h.hx, y:it.y};
+  const h=symbolPortHalf(it), c=connBox(it);   // 図形は外接矩形の中心が基準（v9.10）
+  if(port==='t') return {x:c.cx, y:c.cy-h.hy};
+  if(port==='b') return {x:c.cx, y:c.cy+h.hy};
+  if(port==='l') return {x:c.cx-h.hx, y:c.cy};
+  return {x:c.cx+h.hx, y:c.cy};
 }
 function portDir(port){ return (port==='l'||port==='r') ? 'h' : 'v'; }
 function findItemById(arr,id){
@@ -4228,13 +4318,14 @@ function nextItemId(arr,prefix){
   }
   return prefix+(max+1);
 }
-/* v9.5 より前に置いた記号には id が無い。配線を引こうとした時点で採番する。
-   起動時に全図面へ一括で入れないのは、触っていない図面の保存データを変えないため。 */
+/* v9.5 より前に置いた記号・図形には id が無い。配線を引こうとした時点で採番する。
+   起動時に全図面へ一括で入れないのは、触っていない図面の保存データを変えないため。
+   v9.10：対象を記号から CONNECT_TYPES（記号・四角・円・文字）へ広げた。 */
 function ensureSymbolIds(arr){
   if(!arr) return 0;
   let n=0, max=0;
   for(const it of arr){ if(typeof it.id==='string'&&it.id[0]==='s'){ const v=parseInt(it.id.slice(1),10); if(v>max)max=v; } }
-  for(const it of arr){ if(it.type==='symbol' && !it.id){ it.id='s'+(++max); n++; } }
+  for(const it of arr){ if(isConnectable(it) && !it.id){ it.id='s'+(++max); n++; } }
   return n;
 }
 /* 端点を実座標に解決する。id があれば相手の接続点を引き、控えの x,y も更新する。
@@ -4242,7 +4333,7 @@ function ensureSymbolIds(arr){
 function wireEnd(end,arr){
   if(end && end.id){
     const sym=findItemById(arr,end.id);
-    if(sym && sym.type==='symbol'){
+    if(isConnectable(sym)){   // v9.10：記号だけでなく四角・円・文字も相手になる
       const p=symbolPortPt(sym,end.port||'r');
       end.x=p.x; end.y=p.y; return p;
     }
@@ -4279,7 +4370,7 @@ function hitPort(pt,arr,tolU){
   let best=null, bd=Infinity;
   for(let i=(arr||[]).length-1;i>=0;i--){
     const it=arr[i];
-    if(it.type!=='symbol'||!it.id) continue;
+    if(!isConnectable(it)||!it.id) continue;
     for(const p of symbolPortsOf(it.kind)){
       const q=symbolPortPt(it,p);
       const d=Math.hypot(pt.x-q.x,pt.y-q.y);
@@ -4288,7 +4379,9 @@ function hitPort(pt,arr,tolU){
          記号の真ん中や隣の接続点まで吸ってしまい、右から来たのに上に付くといったことが起きる。
          中心までの距離の8割を上限にすれば、真ん中も隣も吸わない。
          狭くなったぶんは B（記号の本体に落とせば繋がる）が受け止める。 */
-      const lim=Math.min(tolU, Math.hypot(q.x-it.x,q.y-it.y)*0.8);
+      // 中心は connBox から取る（図形は it.x/it.y を持たないので直参照だと NaN になる・v9.10）
+      const c=connBox(it);
+      const lim=Math.min(tolU, Math.hypot(q.x-c.cx,q.y-c.cy)*0.8);
       if(d<lim && d<bd){ bd=d; best={id:it.id, port:p, x:q.x, y:q.y}; }
     }
   }
@@ -4300,14 +4393,17 @@ function hitPort(pt,arr,tolU){
 const WIRE_BODY_PAD_PX=16;
 function hitSymbolBody(pt,arr,padU){
   const pad=(padU==null)?0:padU;
-  let best=null, bd=Infinity;
+  /* v9.10：候補が複数あるときは**いちばん小さいもの**を選ぶ。
+     盤を大きな四角で描き、その中に記号を並べる描き方があるため、
+     「近いほう」で選ぶと中の記号ではなく外の枠を掴んでしまう。 */
+  let best=null, ba=Infinity;
   for(let i=(arr||[]).length-1;i>=0;i--){
     const it=arr[i];
-    if(it.type!=='symbol'||!it.id) continue;
-    const h=symbolHalf(it)+pad;
-    if(pt.x>=it.x-h && pt.x<=it.x+h && pt.y>=it.y-h && pt.y<=it.y+h){
-      const d=Math.hypot(pt.x-it.x, pt.y-it.y);
-      if(d<bd){ bd=d; best=it; }
+    if(!isConnectable(it)||!it.id) continue;
+    const b=connBox(it), hx=b.hx+pad, hy=b.hy+pad;
+    if(pt.x>=b.cx-hx && pt.x<=b.cx+hx && pt.y>=b.cy-hy && pt.y<=b.cy+hy){
+      const area=hx*hy;
+      if(area<ba){ ba=area; best=it; }
     }
   }
   return best;
@@ -4316,7 +4412,8 @@ function hitSymbolBody(pt,arr,padU){
    右から来たら右、下から来たら下。Visio で図形に落としたときの感覚がこれ。 */
 function pickPort(sym,fromPt){
   const ports=symbolPortsOf(sym.kind);
-  const dx=fromPt.x-sym.x, dy=fromPt.y-sym.y;
+  const c=connBox(sym);
+  const dx=fromPt.x-c.cx, dy=fromPt.y-c.cy;
   const want = Math.abs(dx)>=Math.abs(dy) ? (dx>=0?'r':'l') : (dy>=0?'b':'t');
   if(ports.indexOf(want)>=0) return want;
   let best=ports[0], bd=Infinity;
@@ -4335,8 +4432,8 @@ function wireAttachAt(pt,arr,tolU,otherPt){
   if(hp) return hp;
   const sym=hitSymbolBody(pt,arr,screenTol(WIRE_BODY_PAD_PX));
   if(!sym) return null;
-  const s=(sym.size||44);
-  const nearCenter = Math.abs(pt.x-sym.x)<s*0.15 && Math.abs(pt.y-sym.y)<s*0.15;
+  const c=connBox(sym);
+  const nearCenter = Math.abs(pt.x-c.cx)<c.hx*0.22 && Math.abs(pt.y-c.cy)<c.hy*0.22;
   const dir = (nearCenter && otherPt) ? otherPt : pt;
   const port=pickPort(sym,dir), q=symbolPortPt(sym,port);
   return {id:sym.id, port, x:q.x, y:q.y};
@@ -4699,15 +4796,16 @@ const PORT_BTN_OUT_PX=52;  // 記号の中心からボタンの中心までの�
 const PORT_BTN_R_PX=22;    // ボタンの半径（画面px）＝直径44px
 let wirePickSym=null;      // いま接続点のボタンを出している記号
 function portBtnPt(sym,port){
-  /* 距離は「画面52px」と「記号の端＋ボタン半径＋余白」の**大きいほう**。
-     画面px固定にすると、拡大したとき記号のほうが大きくなってボタンが記号の中に入り、
-     指と記号とボタンが重なる＝元の「見えないものを狙う」問題に戻る。 */
-  const o=Math.max(screenTol(PORT_BTN_OUT_PX),
-                   symbolHalf(sym)+screenTol(PORT_BTN_R_PX+10));
-  if(port==='t') return {x:sym.x, y:sym.y-o};
-  if(port==='b') return {x:sym.x, y:sym.y+o};
-  if(port==='l') return {x:sym.x-o, y:sym.y};
-  return {x:sym.x+o, y:sym.y};
+  /* 距離は「画面52px」と「本体の端＋ボタン半径＋余白」の**大きいほう**。
+     画面px固定にすると、拡大したとき本体のほうが大きくなってボタンが中に入り、
+     指と本体とボタンが重なる＝元の「見えないものを狙う」問題に戻る。
+     v9.10：図形は縦横が違うので、**その辺の端**から押し出す（横長の枠でも上下が近くなりすぎない）。 */
+  const b=connBox(sym), m=screenTol(PORT_BTN_R_PX+10), base=screenTol(PORT_BTN_OUT_PX);
+  const ox=Math.max(base, b.hx+m), oy=Math.max(base, b.hy+m);
+  if(port==='t') return {x:b.cx, y:b.cy-oy};
+  if(port==='b') return {x:b.cx, y:b.cy+oy};
+  if(port==='l') return {x:b.cx-ox, y:b.cy};
+  return {x:b.cx+ox, y:b.cy};
 }
 function hitPortBtn(pt,sym){
   if(!sym) return null;
@@ -5406,7 +5504,7 @@ function redrawInk(){
     // v9.7：点を 4.5px→7px に。指で狙うには小さすぎた
     const rDot=screenTol(7), rOn=screenTol(12);
     list.forEach(it=>{
-      if(it.type!=='symbol'||!it.id) return;
+      if(!isConnectable(it)||!it.id) return;
       symbolPortsOf(it.kind).forEach(p=>{
         const q=symbolPortPt(it,p);
         const near=wireHoverPort && wireHoverPort.id===it.id && wireHoverPort.port===p;
@@ -5439,13 +5537,14 @@ function redrawInk(){
     if(wireHoverPort){
       const sym=findItemById(list,wireHoverPort.id);
       if(sym){
-        const h=symbolHalf(sym)+screenTol(WIRE_BODY_PAD_PX);
+        const b=connBox(sym), pad=screenTol(WIRE_BODY_PAD_PX);
+        const hx=b.hx+pad, hy=b.hy+pad;   // 図形は縦横が違うので箱に合わせる（v9.10）
         ctx.setLineDash([]); ctx.lineWidth=screenTol(3);
         ctx.strokeStyle= wirePendFrom ? 'rgba(34,197,94,.95)' : 'rgba(59,130,246,.9)';
         const r=screenTol(8);
         ctx.beginPath();
-        if(ctx.roundRect) ctx.roundRect(sym.x-h,sym.y-h,h*2,h*2,r);
-        else ctx.rect(sym.x-h,sym.y-h,h*2,h*2);
+        if(ctx.roundRect) ctx.roundRect(b.cx-hx,b.cy-hy,hx*2,hy*2,r);
+        else ctx.rect(b.cx-hx,b.cy-hy,hx*2,hy*2);
         ctx.stroke();
       }
     }
@@ -5537,6 +5636,8 @@ function drawFreeLive(){
   }
 }
 function setTool(t){
+  // 配線図ページ以外で配線ツールに入れない（v9.11）
+  if(t==='wire' && !isWiringPage(dwg())) t='nav';
   // 見るだけ：作図の道具は選べない（選べてしまうと、押しても描けない＝壊れて見える）。
   // 理由をトーストで出すのは、押した反応が何も無いと故障と区別できないため。
   if(state.viewLock && t!=='nav'){ toast(editBlockReason(),'warn'); t='nav'; }
@@ -5578,7 +5679,10 @@ $('#btnShape').addEventListener('click',()=>{
   const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('shape');
 });
 $('#btnWire').addEventListener('click',()=>{
-  const r=editBlockReason(); if(r){toast(r,'warn');return;} setTool('wire');
+  const r=editBlockReason(); if(r){toast(r,'warn');return;}
+  // ボタンは配線図ページ以外では隠しているが、念のためここでも見る（入口は1つに絞る）
+  if(!isWiringPage(dwg())){ toast('配線は配線図ページでのみ使えます','warn'); return; }
+  setTool('wire');
 });
 $('#btnWireBend').addEventListener('click',()=>{
   wireBend = wireBend==='ortho' ? 'free' : 'ortho';
@@ -9191,7 +9295,7 @@ async function downscalePhotoDataUrl(src){
 /* 原寸の保管：メモリには縮小版だけを置き、原寸はIndexedDB（ディスク）に別置きする。
    キーは縮小版のハッシュ（縮小版のdataURLが写真のIDとして全域で使われているため、
    小さい方から原寸を引けるようにしておく）。拡大表示のズームとドライブ保存で原寸を使う。 */
-const APP_BUILD='v9.9';
+const APP_BUILD='v9.12';
 const ORIG_PREFIX='orig:';
 function saveOriginalFor(smallSrc, rawSrc){
   if(smallSrc===rawSrc) return; // 縮小されなかった＝メモリ上のものが原寸そのもの
@@ -9493,7 +9597,7 @@ function renderList(){
             :`<span class="chip">${locked?'未保存':'クラウド'}</span>`}
         </div>
         ${pages.length>1?`<div class="pg-chips">${pages.map(p=>
-            `<button class="pg-chip ${p.id===state.selectedId?'on':''}" data-page="${p.id}">${escHtml(pageLabelOf(p))}</button>`
+            `<button class="pg-chip ${p.id===state.selectedId?'on':''} ${isWiringPage(p)?'wire':''}" data-page="${p.id}">${isWiringPage(p)?'⚡ ':''}${escHtml(pageLabelOf(p))}</button>`
           ).join('')}</div>`:''}
         <button class="ledger-btn" data-ledger="${d.id}" title="写真台帳を開く">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z"/><path d="M4 9h16"/><circle cx="8" cy="14" r="1.6"/><path d="M11 15l2-2 3 3"/></svg>
@@ -9534,17 +9638,29 @@ function renderList(){
   }));
 }
 /* ===== ページバー（v9.6） ===== */
+/* 配線ツールを出すかどうかを、いまのページに合わせる（v9.11）。
+   renderAll から毎回呼ぶので、ページを切り替えた瞬間に追従する。
+   **表示を消すだけでなく、配線ツール中なら移動ツールへ戻す。** 消すだけだと、
+   配線ツールのままふつうのページへ移って線が引けてしまう。 */
+function syncWireTool(){
+  const on=isWiringPage(dwg());
+  const b=$('#btnWire'); if(b) b.style.display = on ? '' : 'none';
+  if(!on && state.tool==='wire') setTool('nav');
+}
 function renderPageBar(){
   const bar=$('#pageBar'); if(!bar) return;
   const d=dwg();
   bar.classList.toggle('show', !!d);
   if(!d) return;
   const ps=bookPages(d), i=pageIndexOf(d);
+  const mark = isWiringPage(d) ? '⚡ ' : '';   // 配線図ページはひと目で分かるように
   $('#pgLabel').textContent = ps.length>1
-    ? `${pageLabelOf(d)}（${i+1}/${ps.length}）`
-    : pageLabelOf(d);
+    ? `${mark}${pageLabelOf(d)}（${i+1}/${ps.length}）`
+    : `${mark}${pageLabelOf(d)}`;
   $('#pgPrev').disabled = i<=0;
   $('#pgNext').disabled = i>=ps.length-1;
+  // 変換ボタンは配線図でないページにだけ出す（配線図のときは出す意味がない）
+  const t2w=$('#pgToWire'); if(t2w) t2w.style.display = isWiringPage(d) ? 'none' : '';
   // 1ページだけの束は、削除＝図面ごと消すことになるので、ここからは消させない（一覧の削除を使う）
   $('#pgDel').disabled = ps.length<2;
 }
@@ -9564,17 +9680,19 @@ function stepPage(dir){
 /* ページを足す。**いまのページが白紙ならその用紙・方眼をそのまま引き継ぐ**
    （sheetSrc は同じ方眼画像なので使い回してよい。作り直すとデータが増えるだけ）。
    取り込み図面の場合は元画像を複製しても意味がないので、A3横の白紙を新しく作る。 */
-async function addBookPage(){
+async function addBookPage(wiring){
   const d=dwg(); if(!d){ toast('先に図面を開いてください','warn'); return; }
   const r=editBlockReason(); if(r){ toast(r,'warn'); return; }
-  await withBusy('ページを追加中…', async()=>{
+  await withBusy(wiring?'配線図ページを追加中…':'ページを追加中…', async()=>{
     const bid=bookIdOf(d);
     // はじめてページを足すとき、その図面を「束」に昇格させる（ここで初めて bookId が書き込まれる）
     bookPages(d).forEach((p,i)=>{ p.bookId=bid; if(!p.pageNo) p.pageNo=i+1; });
     const ps=bookPages(d);
     const id='u'+(++dwgSeq);
     let sheetSrc=d.sheetSrc, sheetW=d.sheetW, sheetH=d.sheetH, gridMM=d.gridMM, gridUnit=d.gridUnit;
-    if(!d.blank){
+    /* 配線図ページは**必ず白紙を作り直す**（v9.11）。取り込み図面の上に部品を並べることは無く、
+       いまのページが白紙でも、配線図は A3横の方眼で始めたほうが揃う。 */
+    if(wiring || !d.blank){
       const b=generateBlankSheet('A3','land',BLANK_GRID_DEFAULT_MM);
       const u=sheetUnits(b.w,b.h), gmm=blankDimsMM('A3','land');
       sheetSrc=b.src; sheetW=u.w; sheetH=u.h; gridMM=b.gridMM; gridUnit=u.w*b.gridMM/gmm.w;
@@ -9584,7 +9702,9 @@ async function addBookPage(){
     const hv=workVer(bookHead(d));
     const v=hv? hv.v : '1';
     drawings.push({
-      id, bookId:bid, pageNo:ps.length+1, pageName:'ページ'+(ps.length+1),
+      id, bookId:bid, pageNo:ps.length+1,
+      wiring: !!wiring,
+      pageName:(wiring?'配線図':'ページ')+(ps.length+1),
       name:d.name, group:d.group, floor:d.floor, cached:true, seenNew:false, blank:true,
       gridMM, gridUnit, mmPerUnit:d.mmPerUnit||DEFAULT_MM_PER_UNIT,
       sheetSrc, sheetW, sheetH,
@@ -9592,7 +9712,7 @@ async function addBookPage(){
     });
     pins[id]=[];
     gotoPage(drawings[drawings.length-1]);
-    toast(`ページ${ps.length+1} を追加しました`,'ok');
+    toast(`${wiring?'配線図':'ページ'}${ps.length+1} を追加しました`,'ok');
   });
 }
 async function renamePage(){
@@ -9640,7 +9760,24 @@ $('#wireCancel').addEventListener('click',()=>{
 $('#pgPrev').addEventListener('click',()=>stepPage(-1));
 $('#pgNext').addEventListener('click',()=>stepPage(1));
 $('#pgLabel').addEventListener('click',renamePage);
-$('#pgAdd').addEventListener('click',addBookPage);
+$('#pgAdd').addEventListener('click',()=>addBookPage(false));
+$('#pgAddWire').addEventListener('click',()=>addBookPage(true));
+/* できあがっているページを配線図に変える（v9.12）。
+   新しく作れるだけだと、既に描いてある図面に配線を足せない。
+   描いてある内容は消さない（印を立てるだけ）。 */
+$('#pgToWire').addEventListener('click',async()=>{
+  const r=editBlockReason(); if(r){ toast(r,'warn'); return; }
+  const d=dwg(); if(!d) return;
+  const ok=await gConfirm({
+    title:'このページを配線図にしますか？',
+    desc:`「${escHtml(pageLabelOf(d))}」で配線が使えるようになります。<br>`
+        +`いま描いてある内容はそのまま残ります。`,
+    ok:'配線図にする'});
+  if(!ok) return;
+  d.wiring=true;
+  renderAll(); setTool('wire');
+  toast('このページを配線図にしました','ok');
+});
 $('#pgDel').addEventListener('click',deletePage);
 
 /* 図面ID単位のデータをまとめて捨てる。ページ削除と図面削除で同じ後始末が要るので切り出した
@@ -10419,7 +10556,7 @@ $('#buildTag').addEventListener('click',e=>{
 });
 
 /* ===== boot ===== */
-function renderAll(){renderList();renderViewer();renderContext();updateTabs();renderPageBar();renderWireHint();}
+function renderAll(){renderList();renderViewer();renderContext();updateTabs();renderPageBar();syncWireTool();renderWireHint();}
 window.addEventListener('resize',fitView);
 renderAll();fitView();layoutPanels();updateCollapsedGlyphs();
 setViewLock(true,true); // 起動は必ず「見るだけ」から（前回の状態は覚えない）
